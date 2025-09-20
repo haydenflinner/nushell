@@ -22,6 +22,7 @@ pub enum Type {
     Error,
     Filesize,
     Float,
+    Decimal,
     Int,
     List(Box<Type>),
     #[default]
@@ -182,7 +183,7 @@ impl Type {
     }
 
     pub fn is_numeric(&self) -> bool {
-        matches!(self, Type::Int | Type::Float | Type::Number)
+        matches!(self, Type::Int | Type::Float | Type::Decimal | Type::Number)
     }
 
     pub fn is_list(&self) -> bool {
@@ -198,6 +199,7 @@ impl Type {
         match self {
             Type::Int => SyntaxShape::Int,
             Type::Float => SyntaxShape::Float,
+            Type::Decimal => SyntaxShape::Float, // Use Float shape for decimal input
             Type::Range => SyntaxShape::Range,
             Type::Bool => SyntaxShape::Boolean,
             Type::String => SyntaxShape::String,
@@ -233,6 +235,7 @@ impl Type {
             Type::Duration => String::from("duration"),
             Type::Filesize => String::from("filesize"),
             Type::Float => String::from("float"),
+            Type::Decimal => String::from("decimal"),
             Type::Int => String::from("int"),
             Type::Range => String::from("range"),
             Type::Record(_) => String::from("record"),
@@ -271,8 +274,12 @@ impl CompareTypes for Type {
             (Type::String | Type::Int, Type::CellPath) => Some(TypeRelation::Subtype),
             (Type::CellPath, Type::String | Type::Int) => Some(TypeRelation::Supertype),
 
-            (Type::Float | Type::Int, Type::Number) => Some(TypeRelation::Subtype),
-            (Type::Number, Type::Float | Type::Int) => Some(TypeRelation::Supertype),
+            (Type::Float | Type::Int | Type::Decimal, Type::Number) => {
+                Some(TypeRelation::Subtype)
+            }
+            (Type::Number, Type::Float | Type::Int | Type::Decimal) => {
+                Some(TypeRelation::Supertype)
+            }
 
             (Type::Glob, Type::String) => Some(TypeRelation::Supertype),
             (Type::String, Type::Glob) => Some(TypeRelation::Subtype),
@@ -380,6 +387,7 @@ impl Display for Type {
             Type::Duration => write!(f, "duration"),
             Type::Filesize => write!(f, "filesize"),
             Type::Float => write!(f, "float"),
+            Type::Decimal => write!(f, "decimal"),
             Type::Int => write!(f, "int"),
             Type::Range => write!(f, "range"),
             Type::Record(columns) => write!(f, "record{columns}"),

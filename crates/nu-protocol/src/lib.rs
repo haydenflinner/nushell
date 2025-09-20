@@ -79,3 +79,13 @@ extern crate nu_test_support;
 
 #[cfg(test)]
 use nu_test_support::harness::main;
+
+/// Creates a ShellError for decimal to float conversion failures
+pub fn decimal_to_float_error(span: Span) -> ShellError {
+    ShellError::CantConvert {
+        to_type: "float".into(),
+        from_type: "decimal".into(),
+        span,
+        help: Some("Decimal value is too large or has too much precision to convert to float".into()),
+    }
+}

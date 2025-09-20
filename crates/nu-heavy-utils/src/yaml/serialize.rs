@@ -31,7 +31,7 @@ use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use chrono::{DateTime, FixedOffset};
 use derive_setters::Setters;
 use nu_protocol::{
-    FromValue, Range, ShellError, Span, Value,
+    FromValue, Range, ShellError, Span, Value, decimal_to_float_error,
     ast::CellPath,
     engine::{Closure, EngineState},
 };
@@ -476,6 +476,10 @@ impl<'v> YamlValue<'v> {
             Value::Bool { val, .. } => YamlValue::Bool(*val),
             Value::Int { val, .. } => YamlValue::Int(*val),
             Value::Float { val, .. } => YamlValue::Float(*val),
+            Value::Decimal { val, .. } => YamlValue::Float(
+                val.to_f64()
+                    .ok_or_else(|| decimal_to_float_error(span))?,
+            ),
             Value::String { val, .. } => YamlValue::Str(val.as_str()),
             Value::Glob { val, .. } => YamlValue::Glob(val.as_str()),
             Value::Filesize { val, .. } => YamlValue::Filesize(val.get()),

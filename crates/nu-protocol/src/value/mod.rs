@@ -102,6 +102,14 @@ pub enum Value {
         internal_span: Span,
     },
     #[non_exhaustive]
+    Decimal {
+        val: rust_decimal::Decimal,
+        /// note: spans are being refactored out of Value
+        /// please use .span() instead of matching this span value
+        #[serde(rename = "span")]
+        internal_span: Span,
+    },
+    #[non_exhaustive]
     String {
         val: String,
         /// note: spans are being refactored out of Value
@@ -411,6 +419,7 @@ impl Clone for Value {
                 internal_span: *internal_span,
             },
             Value::Float { val, internal_span } => Value::float(*val, *internal_span),
+            Value::Decimal { val, internal_span } => Value::decimal(*val, *internal_span),
             Value::String { val, internal_span } => Value::String {
                 val: val.clone(),
                 internal_span: *internal_span,
@@ -509,17 +518,27 @@ impl Value {
         }
     }
 
+    /// Returns the inner `rust_decimal::Decimal` value or an error if this `Value` is not a decimal
+    pub fn as_decimal(&self) -> Result<rust_decimal::Decimal, ShellError> {
+        if let Value::Decimal { val, .. } = self {
+            Ok(*val)
+        } else {
+            self.cant_convert_to("decimal")
+        }
+    }
+
     /// Returns this `Value` converted to a `f64` or an error if it cannot be converted
     ///
     /// Only the following `Value` cases will return an `Ok` result:
     /// - `Int`
     /// - `Float`
+    /// - `Decimal`
     ///
     /// ```
     /// # use nu_protocol::Value;
     /// for val in Value::test_values() {
     ///     assert_eq!(
-    ///         matches!(val, Value::Float { .. } | Value::Int { .. }),
+    ///         matches!(val, Value::Float { .. } | Value::Int { .. } | Value::Decimal { .. }),
     ///         val.coerce_float().is_ok(),
     ///     );
     /// }
@@ -528,6 +547,10 @@ impl Value {
         match self {
             Value::Float { val, .. } => Ok(*val),
             Value::Int { val, .. } => Ok(*val as f64),
+            Value::Decimal { val, .. } => {
+                use rust_decimal::prelude::ToPrimitive;
+                val.to_f64().ok_or_else(|| crate::decimal_to_float_error(self.span()))
+            }
             val => val.cant_convert_to("float"),
         }
     }
@@ -949,6 +972,7 @@ impl Value {
             Value::Bool { internal_span, .. }
             | Value::Int { internal_span, .. }
             | Value::Float { internal_span, .. }
+            | Value::Decimal { internal_span, .. }
             | Value::Filesize { internal_span, .. }
             | Value::Duration { internal_span, .. }
             | Value::Date { internal_span, .. }
@@ -972,6 +996,7 @@ impl Value {
             Value::Bool { internal_span, .. }
             | Value::Int { internal_span, .. }
             | Value::Float { internal_span, .. }
+            | Value::Decimal { internal_span, .. }
             | Value::Filesize { internal_span, .. }
             | Value::Duration { internal_span, .. }
             | Value::Date { internal_span, .. }
@@ -1001,6 +1026,7 @@ impl Value {
             Value::Bool { .. } => Type::Bool,
             Value::Int { .. } => Type::Int,
             Value::Float { .. } => Type::Float,
+            Value::Decimal { .. } => Type::Decimal,
             Value::Filesize { .. } => Type::Filesize,
             Value::Duration { .. } => Type::Duration,
             Value::Date { .. } => Type::Date,
@@ -1034,6 +1060,7 @@ impl Value {
             Value::Bool { .. } => Type::Bool,
             Value::Int { .. } => Type::Int,
             Value::Float { .. } => Type::Float,
+            Value::Decimal { .. } => Type::Decimal,
             Value::Filesize { .. } => Type::Filesize,
             Value::Duration { .. } => Type::Duration,
             Value::Date { .. } => Type::Date,
@@ -1048,6 +1075,67 @@ impl Value {
             Value::Binary { .. } => Type::Binary,
             Value::CellPath { .. } => Type::CellPath,
             Value::Custom { val, .. } => Type::Custom(val.type_name().into()),
+        }
+    }
+
+    /// Determine of the [`Value`] is a [subtype](https://en.wikipedia.org/wiki/Subtyping) of `other`
+    ///
+    /// If you have a [`Value`], this method should always be used over chaining [`Value::get_type`] with [`Type::is_subtype_of`](crate::Type::is_subtype_of).
+    ///
+    /// This method is able to leverage that information encoded in a `Value` to provide more accurate
+    /// type comparison than if one were to collect the type into [`Type`](crate::Type) value with [`Value::get_type`].
+    ///
+    /// Empty lists are considered subtypes of all `list<T>` types.
+    ///
+    /// Lists of mixed records where some column is present in all record is a subtype of `table<column>`.
+    /// For example, `[{a: 1, b: 2}, {a: 1}]` is a subtype of `table<a: int>` (but not `table<a: int, b: int>`).
+    ///
+    /// See also: [`PipelineData::is_subtype_of`](crate::PipelineData::is_subtype_of)
+    pub fn is_subtype_of(&self, other: &Type) -> bool {
+        // records are structurally typed
+        let record_compatible = |val: &Value, other: &[(String, Type)]| match val {
+            Value::Record { val, .. } => other
+                .iter()
+                .all(|(key, ty)| val.get(key).is_some_and(|inner| inner.is_subtype_of(ty))),
+            _ => false,
+        };
+
+        // All cases matched explicitly to ensure this does not accidentally allocate `Type` if any composite types are introduced in the future
+        match (self, other) {
+            (_, Type::Any) => true,
+
+            // `Type` allocation for scalar types is trivial
+            (
+                Value::Bool { .. }
+                | Value::Int { .. }
+                | Value::Float { .. }
+                | Value::Decimal { .. }
+                | Value::String { .. }
+                | Value::Glob { .. }
+                | Value::Filesize { .. }
+                | Value::Duration { .. }
+                | Value::Date { .. }
+                | Value::Range { .. }
+                | Value::Closure { .. }
+                | Value::Error { .. }
+                | Value::Binary { .. }
+                | Value::CellPath { .. }
+                | Value::Nothing { .. },
+                _,
+            ) => self.get_type().is_subtype_of(other),
+
+            // matching composite types
+            (val @ Value::Record { .. }, Type::Record(inner)) => record_compatible(val, inner),
+            (Value::List { vals, .. }, Type::List(inner)) => {
+                vals.iter().all(|val| val.is_subtype_of(inner))
+            }
+            (Value::List { vals, .. }, Type::Table(inner)) => {
+                vals.iter().all(|val| record_compatible(val, inner))
+            }
+            (Value::Custom { val, .. }, Type::Custom(inner)) => val.type_name() == **inner,
+
+            // non-matching composite types
+            (Value::Record { .. } | Value::List { .. } | Value::Custom { .. }, _) => false,
         }
     }
 
@@ -1103,6 +1191,7 @@ impl Value {
             Value::Bool { val, .. } => val.to_string(),
             Value::Int { val, .. } => val.to_string(),
             Value::Float { val, .. } => ObviousFloat(*val).to_string(),
+            Value::Decimal { val, .. } => val.to_string(),
             Value::Filesize { val, .. } => config.filesize.format(*val).to_string(),
             Value::Duration { val, .. } => format_duration(*val, config.duration_max_unit),
             Value::Date { val, .. } => match &config.datetime_format.normal {
@@ -1805,6 +1894,7 @@ impl Value {
             Value::Bool { .. }
             | Value::Int { .. }
             | Value::Float { .. }
+            | Value::Decimal { .. }
             | Value::Filesize { .. }
             | Value::Duration { .. }
             | Value::Date { .. }
@@ -1908,6 +1998,13 @@ impl Value {
 
     pub fn float(val: f64, span: Span) -> Value {
         Value::Float {
+            val,
+            internal_span: span,
+        }
+    }
+
+    pub fn decimal(val: rust_decimal::Decimal, span: Span) -> Value {
+        Value::Decimal {
             val,
             internal_span: span,
         }
@@ -2451,6 +2548,7 @@ impl PartialOrd for Value {
                 Value::Bool { val: rhs, .. } => lhs.partial_cmp(rhs),
                 Value::Int { .. } => Some(Ordering::Less),
                 Value::Float { .. } => Some(Ordering::Less),
+                Value::Decimal { .. } => Some(Ordering::Less),
                 Value::String { .. } => Some(Ordering::Less),
                 Value::Glob { .. } => Some(Ordering::Less),
                 Value::Filesize { .. } => Some(Ordering::Less),
@@ -2470,6 +2568,14 @@ impl PartialOrd for Value {
                 Value::Bool { .. } => Some(Ordering::Greater),
                 Value::Int { val: rhs, .. } => lhs.partial_cmp(rhs),
                 Value::Float { val: rhs, .. } => compare_floats(*lhs as f64, *rhs),
+                Value::Decimal { val: rhs, .. } => {
+                    use rust_decimal::prelude::FromPrimitive;
+                    if let Some(lhs_decimal) = rust_decimal::Decimal::from_i64(*lhs) {
+                        lhs_decimal.partial_cmp(rhs)
+                    } else {
+                        None // Cannot compare if int is too large for decimal
+                    }
+                }
                 Value::String { .. } => Some(Ordering::Less),
                 Value::Glob { .. } => Some(Ordering::Less),
                 Value::Filesize { .. } => Some(Ordering::Less),
@@ -2489,6 +2595,48 @@ impl PartialOrd for Value {
                 Value::Bool { .. } => Some(Ordering::Greater),
                 Value::Int { val: rhs, .. } => compare_floats(*lhs, *rhs as f64),
                 Value::Float { val: rhs, .. } => compare_floats(*lhs, *rhs),
+                Value::Decimal { val: rhs, .. } => {
+                    use rust_decimal::prelude::ToPrimitive;
+                    if let Some(rhs_f64) = rhs.to_f64() {
+                        compare_floats(*lhs, rhs_f64)
+                    } else {
+                        None // Cannot compare if decimal is too large for f64
+                    }
+                }
+                Value::String { .. } => Some(Ordering::Less),
+                Value::Glob { .. } => Some(Ordering::Less),
+                Value::Filesize { .. } => Some(Ordering::Less),
+                Value::Duration { .. } => Some(Ordering::Less),
+                Value::Date { .. } => Some(Ordering::Less),
+                Value::Range { .. } => Some(Ordering::Less),
+                Value::Record { .. } => Some(Ordering::Less),
+                Value::List { .. } => Some(Ordering::Less),
+                Value::Closure { .. } => Some(Ordering::Less),
+                Value::Error { .. } => Some(Ordering::Less),
+                Value::Binary { .. } => Some(Ordering::Less),
+                Value::CellPath { .. } => Some(Ordering::Less),
+                Value::Custom { .. } => Some(Ordering::Less),
+                Value::Nothing { .. } => Some(Ordering::Less),
+            },
+            (Value::Decimal { val: lhs, .. }, rhs) => match rhs {
+                Value::Bool { .. } => Some(Ordering::Greater),
+                Value::Int { val: rhs, .. } => {
+                    use rust_decimal::prelude::FromPrimitive;
+                    if let Some(rhs_decimal) = rust_decimal::Decimal::from_i64(*rhs) {
+                        lhs.partial_cmp(&rhs_decimal)
+                    } else {
+                        None // Cannot compare if int is too large for decimal
+                    }
+                }
+                Value::Float { val: rhs, .. } => {
+                    use rust_decimal::prelude::ToPrimitive;
+                    if let Some(lhs_f64) = lhs.to_f64() {
+                        compare_floats(lhs_f64, *rhs)
+                    } else {
+                        None // Cannot compare if decimal is too large for f64
+                    }
+                }
+                Value::Decimal { val: rhs, .. } => lhs.partial_cmp(rhs),
                 Value::String { .. } => Some(Ordering::Less),
                 Value::Glob { .. } => Some(Ordering::Less),
                 Value::Filesize { .. } => Some(Ordering::Less),
@@ -2508,6 +2656,7 @@ impl PartialOrd for Value {
                 Value::Bool { .. } => Some(Ordering::Greater),
                 Value::Int { .. } => Some(Ordering::Greater),
                 Value::Float { .. } => Some(Ordering::Greater),
+                Value::Decimal { .. } => Some(Ordering::Greater),
                 Value::String { val: rhs, .. } => lhs.partial_cmp(rhs),
                 Value::Glob { val: rhs, .. } => lhs.partial_cmp(rhs),
                 Value::Filesize { .. } => Some(Ordering::Less),
@@ -2527,6 +2676,7 @@ impl PartialOrd for Value {
                 Value::Bool { .. } => Some(Ordering::Greater),
                 Value::Int { .. } => Some(Ordering::Greater),
                 Value::Float { .. } => Some(Ordering::Greater),
+                Value::Decimal { .. } => Some(Ordering::Greater),
                 Value::String { val: rhs, .. } => lhs.partial_cmp(rhs),
                 Value::Glob { val: rhs, .. } => lhs.partial_cmp(rhs),
                 Value::Filesize { .. } => Some(Ordering::Less),
@@ -2546,6 +2696,7 @@ impl PartialOrd for Value {
                 Value::Bool { .. } => Some(Ordering::Greater),
                 Value::Int { .. } => Some(Ordering::Greater),
                 Value::Float { .. } => Some(Ordering::Greater),
+                Value::Decimal { .. } => Some(Ordering::Greater),
                 Value::String { .. } => Some(Ordering::Greater),
                 Value::Glob { .. } => Some(Ordering::Greater),
                 Value::Filesize { val: rhs, .. } => lhs.partial_cmp(rhs),
@@ -2565,6 +2716,7 @@ impl PartialOrd for Value {
                 Value::Bool { .. } => Some(Ordering::Greater),
                 Value::Int { .. } => Some(Ordering::Greater),
                 Value::Float { .. } => Some(Ordering::Greater),
+                Value::Decimal { .. } => Some(Ordering::Greater),
                 Value::String { .. } => Some(Ordering::Greater),
                 Value::Glob { .. } => Some(Ordering::Greater),
                 Value::Filesize { .. } => Some(Ordering::Greater),
@@ -2584,6 +2736,7 @@ impl PartialOrd for Value {
                 Value::Bool { .. } => Some(Ordering::Greater),
                 Value::Int { .. } => Some(Ordering::Greater),
                 Value::Float { .. } => Some(Ordering::Greater),
+                Value::Decimal { .. } => Some(Ordering::Greater),
                 Value::String { .. } => Some(Ordering::Greater),
                 Value::Glob { .. } => Some(Ordering::Greater),
                 Value::Filesize { .. } => Some(Ordering::Greater),
@@ -2603,6 +2756,7 @@ impl PartialOrd for Value {
                 Value::Bool { .. } => Some(Ordering::Greater),
                 Value::Int { .. } => Some(Ordering::Greater),
                 Value::Float { .. } => Some(Ordering::Greater),
+                Value::Decimal { .. } => Some(Ordering::Greater),
                 Value::String { .. } => Some(Ordering::Greater),
                 Value::Glob { .. } => Some(Ordering::Greater),
                 Value::Filesize { .. } => Some(Ordering::Greater),
@@ -2622,6 +2776,7 @@ impl PartialOrd for Value {
                 Value::Bool { .. } => Some(Ordering::Greater),
                 Value::Int { .. } => Some(Ordering::Greater),
                 Value::Float { .. } => Some(Ordering::Greater),
+                Value::Decimal { .. } => Some(Ordering::Greater),
                 Value::String { .. } => Some(Ordering::Greater),
                 Value::Glob { .. } => Some(Ordering::Greater),
                 Value::Filesize { .. } => Some(Ordering::Greater),
@@ -2667,6 +2822,7 @@ impl PartialOrd for Value {
                 Value::Bool { .. } => Some(Ordering::Greater),
                 Value::Int { .. } => Some(Ordering::Greater),
                 Value::Float { .. } => Some(Ordering::Greater),
+                Value::Decimal { .. } => Some(Ordering::Greater),
                 Value::String { .. } => Some(Ordering::Greater),
                 Value::Glob { .. } => Some(Ordering::Greater),
                 Value::Filesize { .. } => Some(Ordering::Greater),
@@ -2686,6 +2842,7 @@ impl PartialOrd for Value {
                 Value::Bool { .. } => Some(Ordering::Greater),
                 Value::Int { .. } => Some(Ordering::Greater),
                 Value::Float { .. } => Some(Ordering::Greater),
+                Value::Decimal { .. } => Some(Ordering::Greater),
                 Value::String { .. } => Some(Ordering::Greater),
                 Value::Glob { .. } => Some(Ordering::Greater),
                 Value::Filesize { .. } => Some(Ordering::Greater),
@@ -2705,6 +2862,7 @@ impl PartialOrd for Value {
                 Value::Bool { .. } => Some(Ordering::Greater),
                 Value::Int { .. } => Some(Ordering::Greater),
                 Value::Float { .. } => Some(Ordering::Greater),
+                Value::Decimal { .. } => Some(Ordering::Greater),
                 Value::String { .. } => Some(Ordering::Greater),
                 Value::Glob { .. } => Some(Ordering::Greater),
                 Value::Filesize { .. } => Some(Ordering::Greater),
@@ -2724,6 +2882,7 @@ impl PartialOrd for Value {
                 Value::Bool { .. } => Some(Ordering::Greater),
                 Value::Int { .. } => Some(Ordering::Greater),
                 Value::Float { .. } => Some(Ordering::Greater),
+                Value::Decimal { .. } => Some(Ordering::Greater),
                 Value::String { .. } => Some(Ordering::Greater),
                 Value::Glob { .. } => Some(Ordering::Greater),
                 Value::Filesize { .. } => Some(Ordering::Greater),
@@ -2743,6 +2902,7 @@ impl PartialOrd for Value {
                 Value::Bool { .. } => Some(Ordering::Greater),
                 Value::Int { .. } => Some(Ordering::Greater),
                 Value::Float { .. } => Some(Ordering::Greater),
+                Value::Decimal { .. } => Some(Ordering::Greater),
                 Value::String { .. } => Some(Ordering::Greater),
                 Value::Glob { .. } => Some(Ordering::Greater),
                 Value::Filesize { .. } => Some(Ordering::Greater),
@@ -2763,6 +2923,7 @@ impl PartialOrd for Value {
                 Value::Bool { .. } => Some(Ordering::Greater),
                 Value::Int { .. } => Some(Ordering::Greater),
                 Value::Float { .. } => Some(Ordering::Greater),
+                Value::Decimal { .. } => Some(Ordering::Greater),
                 Value::String { .. } => Some(Ordering::Greater),
                 Value::Glob { .. } => Some(Ordering::Greater),
                 Value::Filesize { .. } => Some(Ordering::Greater),
@@ -2826,6 +2987,49 @@ impl Value {
             (Value::Float { val: lhs, .. }, Value::Float { val: rhs, .. }) => {
                 Ok(Value::float(lhs + rhs, span))
             }
+            (Value::Decimal { val: lhs, .. }, Value::Decimal { val: rhs, .. }) => {
+                Ok(Value::decimal(*lhs + *rhs, span))
+            }
+            (Value::Int { val: lhs, .. }, Value::Decimal { val: rhs, .. }) => {
+                use rust_decimal::prelude::FromPrimitive;
+                let lhs_decimal = rust_decimal::Decimal::from_i64(*lhs)
+                    .ok_or_else(|| ShellError::OperatorOverflow {
+                        msg: "int to decimal conversion overflowed".into(),
+                        span,
+                        help: None,
+                    })?;
+                Ok(Value::decimal(lhs_decimal + *rhs, span))
+            }
+            (Value::Decimal { val: lhs, .. }, Value::Int { val: rhs, .. }) => {
+                use rust_decimal::prelude::FromPrimitive;
+                let rhs_decimal = rust_decimal::Decimal::from_i64(*rhs)
+                    .ok_or_else(|| ShellError::OperatorOverflow {
+                        msg: "int to decimal conversion overflowed".into(),
+                        span,
+                        help: None,
+                    })?;
+                Ok(Value::decimal(*lhs + rhs_decimal, span))
+            }
+            (Value::Float { val: lhs, .. }, Value::Decimal { val: rhs, .. }) => {
+                use rust_decimal::prelude::FromPrimitive;
+                let lhs_decimal = rust_decimal::Decimal::from_f64(*lhs)
+                    .ok_or_else(|| ShellError::OperatorOverflow {
+                        msg: "float to decimal conversion failed".into(),
+                        span,
+                        help: None,
+                    })?;
+                Ok(Value::decimal(lhs_decimal + *rhs, span))
+            }
+            (Value::Decimal { val: lhs, .. }, Value::Float { val: rhs, .. }) => {
+                use rust_decimal::prelude::FromPrimitive;
+                let rhs_decimal = rust_decimal::Decimal::from_f64(*rhs)
+                    .ok_or_else(|| ShellError::OperatorOverflow {
+                        msg: "float to decimal conversion failed".into(),
+                        span,
+                        help: None,
+                    })?;
+                Ok(Value::decimal(*lhs + rhs_decimal, span))
+            }
             (Value::String { val: lhs, .. }, Value::String { val: rhs, .. }) => {
                 Ok(Value::string(lhs.to_string() + rhs, span))
             }
@@ -2878,6 +3082,7 @@ impl Value {
                         val,
                         Value::Int { .. }
                             | Value::Float { .. }
+                            | Value::Decimal { .. }
                             | Value::String { .. }
                             | Value::Date { .. }
                             | Value::Duration { .. }

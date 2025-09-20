@@ -248,6 +248,7 @@ roxmltree = "0.21.1"
 rstest = { version = "0.27.0", default-features = false }
 rstest_reuse = "0.7"
 rusqlite = "0.40.2"
+rust_decimal = "1.36"
 # We have to semi-fix rustls and ureq versions
 # because we use unversioned api to allow users set up their own
 # crypto providers (grep for "unversioned").
@@ -365,6 +366,7 @@ serde_json = { workspace = true }
 simplelog = "0.12"
 time = "0.3.55"
 same-file = "1.0.6"
+rust_decimal = { workspace = true }
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 # Our dependencies don't use OpenSSL on Windows

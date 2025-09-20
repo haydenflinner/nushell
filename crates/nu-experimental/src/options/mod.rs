@@ -7,6 +7,7 @@ use crate::*;
 
 mod cell_path_types;
 mod dc_glob;
+mod decimal_math;
 mod enforce_runtime_annotations;
 mod example;
 mod native_clip;
@@ -63,6 +64,7 @@ pub(crate) trait ExperimentalOptionMarker {
 // The marker structs are not relevant and needlessly clutter the generated docs.
 pub use cell_path_types::CELL_PATH_TYPES;
 pub use dc_glob::DC_GLOB;
+pub use decimal_math::DECIMAL_MATH;
 pub use enforce_runtime_annotations::ENFORCE_RUNTIME_ANNOTATIONS;
 pub use example::EXAMPLE;
 pub use native_clip::NATIVE_CLIP;
@@ -77,6 +79,7 @@ pub use reorder_cell_paths::REORDER_CELL_PATHS;
 /// Use this to show users every experimental option, including their descriptions,
 /// identifiers, and current state.
 pub static ALL: &[&ExperimentalOption] = &[
+    &DECIMAL_MATH,
     &EXAMPLE,
     &DC_GLOB,
     &REORDER_CELL_PATHS,

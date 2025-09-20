@@ -1,7 +1,8 @@
 use nu_protocol::{
-    CustomValue, FromValue, IntoValue, Record, ShellError, Span, Type,
+    CustomValue, FromValue, IntoValue, Record, ShellError, Span, Type, decimal_to_float_error,
     engine::{Closure, EngineState},
 };
+use num_traits::ToPrimitive;
 
 use crate::Value as JsonValue;
 use nu_protocol::Value as NuValue;
@@ -58,6 +59,10 @@ impl JsonValue {
             NuValue::Bool { val, .. } => JsonValue::Bool(val),
             NuValue::Int { val, .. } => JsonValue::I64(val),
             NuValue::Float { val, .. } => JsonValue::F64(val),
+            NuValue::Decimal { val, .. } => JsonValue::F64(
+                val.to_f64()
+                    .ok_or_else(|| decimal_to_float_error(span))?,
+            ),
             NuValue::String { val, .. } => JsonValue::String(val),
             NuValue::Glob { val, .. } => JsonValue::String(val.to_string()),
             NuValue::Filesize { val, .. } => JsonValue::I64(val.get()),

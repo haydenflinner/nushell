@@ -36,6 +36,7 @@ use nu_protocol::{
     engine::{Closure, EngineState},
 };
 use nu_utils::FmtHandle;
+use num_traits::ToPrimitive;
 use scopeguard::defer;
 use serde::{
     Serialize,

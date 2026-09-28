@@ -259,6 +259,11 @@ impl Debug for Value {
                     .field("val", val)
                     .field("internal_span", internal_span)
                     .finish(),
+                Self::Decimal { val, internal_span } => f
+                    .debug_struct("Decimal")
+                    .field("val", val)
+                    .field("internal_span", internal_span)
+                    .finish(),
                 Self::String { val, internal_span } => f
                     .debug_struct("String")
                     .field("val", val)
@@ -353,6 +358,7 @@ impl Debug for Value {
             Value::Bool { val, .. } => wrap_tuple("Bool", val).fmt(f),
             Value::Int { val, .. } => wrap_tuple("Int", val).fmt(f),
             Value::Float { val, .. } => wrap_tuple("Float", val).fmt(f),
+            Value::Decimal { val, .. } => wrap_tuple("Decimal", val).fmt(f),
             Value::String { val, .. } => wrap_tuple("String", val).fmt(f),
             Value::Glob { val, no_expand, .. } => wrap_tuple(
                 "Glob",
@@ -1075,67 +1081,6 @@ impl Value {
             Value::Binary { .. } => Type::Binary,
             Value::CellPath { .. } => Type::CellPath,
             Value::Custom { val, .. } => Type::Custom(val.type_name().into()),
-        }
-    }
-
-    /// Determine of the [`Value`] is a [subtype](https://en.wikipedia.org/wiki/Subtyping) of `other`
-    ///
-    /// If you have a [`Value`], this method should always be used over chaining [`Value::get_type`] with [`Type::is_subtype_of`](crate::Type::is_subtype_of).
-    ///
-    /// This method is able to leverage that information encoded in a `Value` to provide more accurate
-    /// type comparison than if one were to collect the type into [`Type`](crate::Type) value with [`Value::get_type`].
-    ///
-    /// Empty lists are considered subtypes of all `list<T>` types.
-    ///
-    /// Lists of mixed records where some column is present in all record is a subtype of `table<column>`.
-    /// For example, `[{a: 1, b: 2}, {a: 1}]` is a subtype of `table<a: int>` (but not `table<a: int, b: int>`).
-    ///
-    /// See also: [`PipelineData::is_subtype_of`](crate::PipelineData::is_subtype_of)
-    pub fn is_subtype_of(&self, other: &Type) -> bool {
-        // records are structurally typed
-        let record_compatible = |val: &Value, other: &[(String, Type)]| match val {
-            Value::Record { val, .. } => other
-                .iter()
-                .all(|(key, ty)| val.get(key).is_some_and(|inner| inner.is_subtype_of(ty))),
-            _ => false,
-        };
-
-        // All cases matched explicitly to ensure this does not accidentally allocate `Type` if any composite types are introduced in the future
-        match (self, other) {
-            (_, Type::Any) => true,
-
-            // `Type` allocation for scalar types is trivial
-            (
-                Value::Bool { .. }
-                | Value::Int { .. }
-                | Value::Float { .. }
-                | Value::Decimal { .. }
-                | Value::String { .. }
-                | Value::Glob { .. }
-                | Value::Filesize { .. }
-                | Value::Duration { .. }
-                | Value::Date { .. }
-                | Value::Range { .. }
-                | Value::Closure { .. }
-                | Value::Error { .. }
-                | Value::Binary { .. }
-                | Value::CellPath { .. }
-                | Value::Nothing { .. },
-                _,
-            ) => self.get_type().is_subtype_of(other),
-
-            // matching composite types
-            (val @ Value::Record { .. }, Type::Record(inner)) => record_compatible(val, inner),
-            (Value::List { vals, .. }, Type::List(inner)) => {
-                vals.iter().all(|val| val.is_subtype_of(inner))
-            }
-            (Value::List { vals, .. }, Type::Table(inner)) => {
-                vals.iter().all(|val| record_compatible(val, inner))
-            }
-            (Value::Custom { val, .. }, Type::Custom(inner)) => val.type_name() == **inner,
-
-            // non-matching composite types
-            (Value::Record { .. } | Value::List { .. } | Value::Custom { .. }, _) => false,
         }
     }
 
@@ -1961,6 +1906,7 @@ impl Value {
             Value::Bool { .. } => std::mem::size_of::<Self>(),
             Value::Int { .. } => std::mem::size_of::<Self>(),
             Value::Float { .. } => std::mem::size_of::<Self>(),
+            Value::Decimal { .. } => std::mem::size_of::<Self>(),
             Value::Filesize { .. } => std::mem::size_of::<Self>(),
             Value::Duration { .. } => std::mem::size_of::<Self>(),
             Value::Date { .. } => std::mem::size_of::<Self>(),

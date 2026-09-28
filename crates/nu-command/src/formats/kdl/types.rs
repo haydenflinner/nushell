@@ -7,7 +7,7 @@ use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use chrono::{DateTime, FixedOffset};
 use kdl::{KdlEntry, KdlValue};
 use nu_engine::command_prelude::*;
-use nu_protocol::{Range, ast::CellPath, engine::EngineState};
+use nu_protocol::{Range, ast::CellPath, decimal_to_float_error, engine::EngineState};
 use num_traits::ToPrimitive;
 use std::str::FromStr;
 
@@ -284,6 +284,13 @@ pub(crate) fn nu_literal_to_kdl(
         Value::Bool { val, .. } => Ok((KdlValue::Bool(*val), None)),
         Value::Int { val, .. } => Ok((KdlValue::Integer(*val as i128), None)),
         Value::Float { val, .. } => Ok((KdlValue::Float(*val), None)),
+        Value::Decimal { val, .. } => Ok((
+            KdlValue::Float(
+                val.to_f64()
+                    .ok_or_else(|| decimal_to_float_error(value.span()))?,
+            ),
+            None,
+        )),
         Value::String { val, .. } => Ok((KdlValue::String(val.clone()), None)),
         Value::Nothing { .. } => Ok((KdlValue::Null, None)),
         Value::Filesize { val, .. } => Ok((KdlValue::Integer(val.get() as i128), Some(TY_FILESIZE))),
@@ -350,6 +357,7 @@ pub(crate) fn is_kdl_literal(value: &Value) -> bool {
         Value::Bool { .. }
             | Value::Int { .. }
             | Value::Float { .. }
+            | Value::Decimal { .. }
             | Value::String { .. }
             | Value::Nothing { .. }
             | Value::Filesize { .. }

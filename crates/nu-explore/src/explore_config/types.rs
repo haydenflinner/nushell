@@ -63,7 +63,9 @@ impl NuValueType {
             nu_protocol::Value::Nothing { .. } => NuValueType::Nothing,
             nu_protocol::Value::Bool { .. } => NuValueType::Bool,
             nu_protocol::Value::Int { .. } => NuValueType::Int,
-            nu_protocol::Value::Float { .. } => NuValueType::Float,
+            nu_protocol::Value::Float { .. } | nu_protocol::Value::Decimal { .. } => {
+                NuValueType::Float
+            }
             nu_protocol::Value::String { .. } => NuValueType::String,
             nu_protocol::Value::List { .. } => NuValueType::List,
             nu_protocol::Value::Record { .. } => NuValueType::Record,

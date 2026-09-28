@@ -4,6 +4,7 @@ use crate::explore_config::types::NuValueType;
 use nu_config::ConfigFileKind;
 use nu_protocol::engine::EngineState;
 use nu_protocol::{ShellError, shell_error::generic::GenericError};
+use num_traits::ToPrimitive;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::error::Error;
@@ -20,6 +21,11 @@ pub fn nu_value_to_json(
         nu_protocol::Value::Bool { val, .. } => Value::Bool(*val),
         nu_protocol::Value::Int { val, .. } => Value::Number((*val).into()),
         nu_protocol::Value::Float { val, .. } => serde_json::Number::from_f64(*val)
+            .map(Value::Number)
+            .unwrap_or(Value::Null),
+        nu_protocol::Value::Decimal { val, .. } => val
+            .to_f64()
+            .and_then(serde_json::Number::from_f64)
             .map(Value::Number)
             .unwrap_or(Value::Null),
         nu_protocol::Value::String { val, .. } => Value::String(val.clone()),

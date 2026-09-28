@@ -26,6 +26,7 @@ yaml = [
   "dep:better_default",
   "dep:chrono",
   "dep:derive_setters",
+  "dep:num-traits",
   "dep:pastey",
   "dep:regex",
   "dep:scopeguard",
@@ -43,6 +44,7 @@ base64 = { workspace = true, optional = true }
 better_default = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
 derive_setters = { workspace = true, optional = true }
+num-traits = { workspace = true, optional = true }
 pastey = { workspace = true, optional = true }
 regex = { workspace = true, optional = true }
 scopeguard = { workspace = true, optional = true }

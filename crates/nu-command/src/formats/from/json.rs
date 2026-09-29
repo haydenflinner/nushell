@@ -28,6 +28,12 @@ impl Command for FromJson {
                 "Follow the json specification exactly.",
                 Some('s'),
             )
+            .named(
+                "as",
+                SyntaxShape::String,
+                "Validate the parsed value against a declared `type` name (e.g. `--as User`); enum base records decode into real enum values.",
+                None,
+            )
             .category(Category::Formats)
     }
 
@@ -78,10 +84,66 @@ impl Command for FromJson {
         let span = call.head;
 
         let strict = call.has_flag(engine_state, stack, "strict")?;
+        let as_type: Option<String> = call.get_flag(engine_state, stack, "as")?;
         let metadata = input.take_metadata().map(|md| md.with_content_type(None));
 
         // TODO: turn this into a structured underline of the nu_json error
         if call.has_flag(engine_state, stack, "objects")? {
+            // `--as` validates eagerly (validation needs `engine_state`,
+            // which can't be captured by the lazy line stream).
+            if as_type.is_some() {
+                let vals: Vec<Value> = match input {
+                    PipelineData::Value(Value::String { val, .. }, ..) => read_json_lines(
+                        Cursor::new(val),
+                        span,
+                        strict,
+                        engine_state.signals().clone(),
+                    )
+                    .into_inner()
+                    .collect(),
+                    PipelineData::ByteStream(stream, ..)
+                        if stream.type_() != ByteStreamType::Binary =>
+                    {
+                        match stream.reader() {
+                            Some(reader) => read_json_lines(
+                                reader,
+                                span,
+                                strict,
+                                engine_state.signals().clone(),
+                            )
+                            .into_inner()
+                            .collect(),
+                            None => vec![],
+                        }
+                    }
+                    _ => {
+                        return Err(ShellError::OnlySupportsThisInputType {
+                            exp_input_type: "string".into(),
+                            wrong_type: input.get_type().to_string(),
+                            dst_span: call.head,
+                            src_span: input.span().unwrap_or(call.head),
+                        });
+                    }
+                };
+                let name = as_type.as_ref().expect("checked above");
+                let mut out = Vec::with_capacity(vals.len());
+                for v in vals {
+                    // Parse errors arrive as error values in the stream.
+                    let v = match v {
+                        Value::Error { error, .. } => return Err(*error),
+                        v => v,
+                    };
+                    out.push(nu_protocol::validate::validate_value(
+                        v,
+                        name,
+                        engine_state,
+                        &[],
+                        span,
+                    )?);
+                }
+                return Ok(Value::list(out, span).into_pipeline_data_with_metadata(metadata));
+            }
+
             // Return a stream of JSON values, one for each non-empty line
             match input {
                 PipelineData::Value(Value::String { val, .. }, ..) => {
@@ -122,10 +184,14 @@ impl Command for FromJson {
                 return Ok(Value::nothing(span).into_pipeline_data());
             }
 
-            Ok(
-                try_str_to_value(&string_input, span, strict, engine_state.signals())?
-                    .into_pipeline_data_with_metadata(metadata),
-            )
+            let value = try_str_to_value(&string_input, span, strict, engine_state.signals())?;
+            let value = match &as_type {
+                Some(name) => {
+                    nu_protocol::validate::validate_value(value, name, engine_state, &[], span)?
+                }
+                None => value,
+            };
+            Ok(value.into_pipeline_data_with_metadata(metadata))
         }
     }
 }

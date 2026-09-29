@@ -35,6 +35,12 @@ impl Command for FromYamlLike {
                     .desc("Handle plain scalar keys ('strict' (default), 'verbatim').")
                     .completion(Completion::new_list(&["strict", "verbatim"])),
             )
+            .named(
+                "as",
+                SyntaxShape::String,
+                "Validate the parsed value against a declared `type` name (e.g. `--as Config`); enum base records decode into real enum values.",
+                None,
+            )
     }
 
     fn description(&self) -> &str {
@@ -105,7 +111,16 @@ impl Command for FromYamlLike {
             .with_multiple(multiple.unwrap_or_default())
             .with_ignore_tags(ignore_tags)
             .with_key_resolution(plain_scalar_key_mode.unwrap_or_default());
+        let as_type: Option<String> = call.get_flag(engine_state, stack, "as")?;
         nu_heavy_utils::yaml::parse(yaml, call.head, options)
+            .and_then(|val| {
+                nu_protocol::validate::validate_maybe(
+                    val,
+                    as_type.as_deref(),
+                    engine_state,
+                    call.head,
+                )
+            })
             .map(|val| PipelineData::value(val, metadata))
     }
 }

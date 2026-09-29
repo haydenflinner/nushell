@@ -28,6 +28,12 @@ impl Command for FromMsgpack {
         Signature::build(self.name())
             .input_output_type(Type::Binary, Type::Any)
             .switch("objects", "Read multiple objects from input.", None)
+            .named(
+                "as",
+                SyntaxShape::String,
+                "Validate the parsed value against a declared `type` name (e.g. `--as Config`); enum base records decode into real enum values.",
+                None,
+            )
             .category(Category::Formats)
     }
 
@@ -138,7 +144,42 @@ MessagePack: https://msgpack.org/
                 src_span: input.span().unwrap_or(call.head),
             }),
         };
-        out.map(|pd| pd.set_metadata(metadata))
+        let out = out.map(|pd| pd.set_metadata(metadata))?;
+
+        // `--as` validates eagerly: validation needs `engine_state`, which
+        // can't be captured by the lazy object stream.
+        if let Some(name) = call.get_flag::<String>(engine_state, stack, "as")? {
+            let span = call.head;
+            if objects {
+                let vals: Vec<Value> = out.into_iter().collect();
+                let mut out_vals = Vec::with_capacity(vals.len());
+                for v in vals {
+                    let v = match v {
+                        Value::Error { error, .. } => return Err(*error),
+                        v => v,
+                    };
+                    out_vals.push(nu_protocol::validate::validate_value(
+                        v,
+                        &name,
+                        engine_state,
+                        &[],
+                        span,
+                    )?);
+                }
+                Ok(Value::list(out_vals, span).into_pipeline_data())
+            } else {
+                nu_protocol::validate::validate_value(
+                    out.into_value(span)?,
+                    &name,
+                    engine_state,
+                    &[],
+                    span,
+                )
+                .map(|v| v.into_pipeline_data())
+            }
+        } else {
+            Ok(out)
+        }
     }
 }
 

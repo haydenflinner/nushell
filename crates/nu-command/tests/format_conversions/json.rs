@@ -363,3 +363,94 @@ fn test_to_json_content_type_metadata() -> Result {
 
     test().run(code).expect_value_eq("application/json")
 }
+
+// --as: validating parsed data against declared types
+
+#[test]
+fn from_json_as_record_type() -> Result {
+    let code = r#"
+        struct User { name: string, age: int }
+        '{"name": "ada", "age": 36}' | from json --as User
+        | get name
+    "#;
+    test().run(code).expect_value_eq("ada")
+}
+
+#[test]
+fn from_json_as_type_mismatch_reports_path() -> Result {
+    let err = test()
+        .run(
+            r#"
+            struct User { name: string, age: int }
+            '{"name": "ada", "age": "oops"}' | from json --as User
+        "#,
+        )
+        .expect_shell_error()?;
+    assert!(format!("{err:?}").contains("$.age"));
+    Ok(())
+}
+
+#[test]
+fn from_json_as_table_reports_row_path() -> Result {
+    let err = test()
+        .run(
+            r#"
+            struct Users = table<name: string, age: int>
+            '[{"name":"a","age":1},{"name":"b","age":"x"}]' | from json --as Users
+        "#,
+        )
+        .expect_shell_error()?;
+    assert!(format!("{err:?}").contains("$[1].age"));
+    Ok(())
+}
+
+#[test]
+fn from_json_as_decodes_enum() -> Result {
+    let code = r#"
+        enum Shape { circle: record<radius: float>, point }
+        '{"kind": "circle", "payload": {"radius": 2.5}}' | from json --as Shape
+        | describe
+    "#;
+    test().run(code).expect_value_eq("Shape")
+}
+
+#[test]
+fn from_json_as_enum_bad_variant_errors() -> Result {
+    test()
+        .run(
+            r#"
+            enum Shape { circle: record<radius: float>, point }
+            '{"kind": "triangle"}' | from json --as Shape
+        "#,
+        )
+        .expect_shell_error()
+        .map(drop)
+}
+
+#[test]
+fn from_json_as_nested_enum_field_decodes() -> Result {
+    let code = r#"
+        enum Status { todo, done }
+        struct Task { title: string, status: Status }
+        '{"title": "t", "status": {"kind": "done"}}' | from json --as Task
+        | get status | describe
+    "#;
+    test().run(code).expect_value_eq("Status")
+}
+
+#[test]
+fn from_json_as_instantiated_generic() -> Result {
+    let code = r#"
+        use std/prelude *
+        '{"kind": "some", "payload": 7}' | from json --as "Option<int>" | describe
+    "#;
+    test().run(code).expect_value_eq("Option")
+}
+
+#[test]
+fn from_json_as_unknown_type_errors() -> Result {
+    test()
+        .run(r#"'{"a": 1}' | from json --as DoesNotExist"#)
+        .expect_shell_error()
+        .map(drop)
+}

@@ -467,39 +467,5 @@ pub(crate) fn substitute_type_vars(
     shape: &SyntaxShape,
     bindings: &std::collections::HashMap<&str, &SyntaxShape>,
 ) -> SyntaxShape {
-    match shape {
-        SyntaxShape::TypeVar(name) => bindings
-            .get(name.as_ref())
-            .map(|shape| (*shape).clone())
-            .unwrap_or_else(|| shape.clone()),
-        SyntaxShape::Named(name, inner) => SyntaxShape::Named(
-            name.clone(),
-            Box::new(substitute_type_vars(inner, bindings)),
-        ),
-        SyntaxShape::Custom(name, args) => SyntaxShape::Custom(
-            name.clone(),
-            args.iter()
-                .map(|arg| substitute_type_vars(arg, bindings))
-                .collect(),
-        ),
-        SyntaxShape::List(inner) => {
-            SyntaxShape::List(Box::new(substitute_type_vars(inner, bindings)))
-        }
-        SyntaxShape::OneOf(inner) => SyntaxShape::OneOf(
-            inner
-                .iter()
-                .map(|item| substitute_type_vars(item, bindings))
-                .collect(),
-        ),
-        SyntaxShape::Record(rows) => {
-            SyntaxShape::Record(rows.map(|item| substitute_type_vars(item, bindings)))
-        }
-        SyntaxShape::Table(rows) => {
-            SyntaxShape::Table(rows.map(|item| substitute_type_vars(item, bindings)))
-        }
-        SyntaxShape::Keyword(kw, inner) => {
-            SyntaxShape::Keyword(kw.clone(), Box::new(substitute_type_vars(inner, bindings)))
-        }
-        _ => shape.clone(),
-    }
+    shape.substitute(bindings)
 }

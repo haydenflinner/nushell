@@ -8,6 +8,7 @@ mod into_value;
 mod range;
 #[cfg(test)]
 mod test_derive;
+pub mod validate;
 
 #[doc(hidden)]
 pub mod macros;

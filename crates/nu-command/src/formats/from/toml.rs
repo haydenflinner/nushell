@@ -12,6 +12,12 @@ impl Command for FromToml {
     fn signature(&self) -> Signature {
         Signature::build("from toml")
             .input_output_types(vec![(Type::String, Type::record())])
+            .named(
+                "as",
+                SyntaxShape::String,
+                "Validate the parsed value against a declared `type` name (e.g. `--as Config`); enum base records decode into real enum values.",
+                None,
+            )
             .category(Category::Formats)
     }
 
@@ -21,16 +27,22 @@ impl Command for FromToml {
 
     fn run(
         &self,
-        _engine_state: &EngineState,
-        _stack: &mut Stack,
+        engine_state: &EngineState,
+        stack: &mut Stack,
         call: &Call,
         input: PipelineData,
     ) -> Result<PipelineData, ShellError> {
         let span = call.head;
+        let as_type: Option<String> = call.get_flag(engine_state, stack, "as")?;
         let (mut string_input, span, metadata) = input.collect_string_strict(span)?;
         string_input.push('\n');
-        Ok(convert_string_to_value(string_input, span)?
-            .into_pipeline_data_with_metadata(metadata.map(|md| md.with_content_type(None))))
+        Ok(nu_protocol::validate::validate_maybe(
+            convert_string_to_value(string_input, span)?,
+            as_type.as_deref(),
+            engine_state,
+            span,
+        )?
+        .into_pipeline_data_with_metadata(metadata.map(|md| md.with_content_type(None))))
     }
 
     fn examples(&self) -> Vec<Example<'_>> {

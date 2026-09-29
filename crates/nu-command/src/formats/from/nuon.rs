@@ -16,6 +16,12 @@ impl Command for FromNuon {
     fn signature(&self) -> nu_protocol::Signature {
         Signature::build("from nuon")
             .input_output_types(vec![(Type::String, Type::Any)])
+            .named(
+                "as",
+                SyntaxShape::String,
+                "Validate the parsed value against a declared `type` name (e.g. `--as User`); enum base records decode into real enum values.",
+                None,
+            )
             .category(Category::Formats)
     }
 
@@ -49,17 +55,23 @@ impl Command for FromNuon {
 
     fn run(
         &self,
-        _engine_state: &EngineState,
-        _stack: &mut Stack,
+        engine_state: &EngineState,
+        stack: &mut Stack,
         call: &Call,
         input: PipelineData,
     ) -> Result<PipelineData, ShellError> {
         let head = call.head;
+        let as_type: Option<String> = call.get_flag(engine_state, stack, "as")?;
         let (string_input, _span, metadata) = input.collect_string_strict(head)?;
 
         match nuon::from_nuon(&string_input, Some(head)) {
-            Ok(result) => Ok(result
-                .into_pipeline_data_with_metadata(metadata.map(|md| md.with_content_type(None)))),
+            Ok(result) => Ok(nu_protocol::validate::validate_maybe(
+                result,
+                as_type.as_deref(),
+                engine_state,
+                head,
+            )?
+            .into_pipeline_data_with_metadata(metadata.map(|md| md.with_content_type(None)))),
             Err(err) => Err(ShellError::Generic(
                 GenericError::new(
                     "error when loading nuon text",

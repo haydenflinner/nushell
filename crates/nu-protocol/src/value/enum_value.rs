@@ -1,7 +1,8 @@
 use crate::{
-    CustomValue, Record, ShellError, Span, Value,
+    CompareTypes, CustomValue, EnumDef, Record, ShellError, Span, Value,
     ast::{Comparison, Operator},
     casing::Casing,
+    shell_error::generic::GenericError,
 };
 use serde::{Deserialize, Serialize};
 use std::any::Any;
@@ -54,6 +55,118 @@ impl EnumValue {
         }
 
         record
+    }
+
+    /// Rebuild an enum value from its [`base_record`](Self::base_record)
+    /// encoding: `{kind: "<variant>"}` for unit variants,
+    /// `{kind: "<variant>", payload: <value>}` otherwise. The variant name
+    /// and payload are validated against `enum_def` — this is the typed
+    /// decode path shared by `Type.from-record` and `--as` validation.
+    ///
+    /// Errors when `value` is not a record, `kind` is missing or unknown,
+    /// `payload` is absent for a payload variant or fails the declared
+    /// payload shape, or extra fields are present.
+    pub fn from_base_record(
+        value: Value,
+        enum_name: &str,
+        enum_def: &EnumDef,
+        span: Span,
+    ) -> Result<Value, ShellError> {
+        let Value::Record { val: record, .. } = value else {
+            return Err(ShellError::CantConvert {
+                to_type: enum_name.to_string(),
+                from_type: value.get_type().to_string(),
+                span: value.span(),
+                help: Some(format!(
+                    "expected a base record like {{kind: \"<variant>\", ...}}"
+                )),
+            });
+        };
+        let mut record = record.into_owned();
+
+        let Some(kind) = record.remove("kind") else {
+            return Err(GenericError::new(
+                format!("missing `kind` field for `{enum_name}`"),
+                "the base record needs a `kind` field naming the variant",
+                span,
+            )
+            .into());
+        };
+
+        let variant_name = match kind {
+            Value::String { val, .. } => val,
+            other => {
+                return Err(GenericError::new(
+                    "`kind` must be a string naming the variant",
+                    format!("got {}", other.get_type()),
+                    other.span(),
+                )
+                .into());
+            }
+        };
+
+        let Some(variant) = enum_def.get_variant(&variant_name) else {
+            return Err(GenericError::new(
+                format!("unknown variant `{variant_name}`"),
+                format!("`{enum_name}` has no variant `{variant_name}`"),
+                span,
+            )
+            .with_help(format!(
+                "variants of `{enum_name}`: {}",
+                enum_def.variant_names().join(", ")
+            ))
+            .into());
+        };
+
+        let payload = match &variant.payload {
+            Some(shape) => {
+                let Some(payload) = record.remove("payload") else {
+                    return Err(GenericError::new(
+                        format!("missing `payload` field for `{enum_name}.{variant_name}`"),
+                        format!("`{variant_name}` takes a {} payload", shape.to_type()),
+                        span,
+                    )
+                    .into());
+                };
+                if !record.is_empty() {
+                    return Err(GenericError::new(
+                        format!("extra fields in base record for `{enum_name}.{variant_name}`"),
+                        "only `kind` and `payload` are allowed here",
+                        span,
+                    )
+                    .into());
+                }
+
+                let expected = shape.to_type();
+                if !payload.get_type().is_subtype_of(&expected) {
+                    return Err(ShellError::CantConvert {
+                        to_type: expected.to_string(),
+                        from_type: payload.get_type().to_string(),
+                        span: payload.span(),
+                        help: Some(format!(
+                            "variant `{variant_name}` of `{enum_name}` expects {expected}"
+                        )),
+                    });
+                }
+                Some(payload)
+            }
+            None => {
+                if !record.is_empty() {
+                    return Err(GenericError::new(
+                        format!("`{enum_name}.{variant_name}` takes no payload"),
+                        "extra fields in the base record",
+                        span,
+                    )
+                    .into());
+                }
+                None
+            }
+        };
+
+        Ok(Value::custom(
+            Box::new(EnumValue::new(enum_name, variant_name, payload)),
+            span,
+        ))
     }
 }
 

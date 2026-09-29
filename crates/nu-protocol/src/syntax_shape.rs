@@ -216,6 +216,45 @@ impl SyntaxShape {
     pub fn table() -> Self {
         Self::Table(Default::default())
     }
+
+    /// Substitute type variables with the shapes they're bound to.
+    ///
+    /// `bindings` maps parameter names (`T` in `struct Option<T> = ...`) to the
+    /// shapes the declaration was instantiated with. Unbound [`TypeVar`]s are
+    /// left in place. Used both at parse time (constructor checking) and at
+    /// runtime (`--as` validation of generic types).
+    pub fn substitute(
+        &self,
+        bindings: &std::collections::HashMap<&str, &SyntaxShape>,
+    ) -> SyntaxShape {
+        match self {
+            SyntaxShape::TypeVar(name) => bindings
+                .get(name.as_ref())
+                .map(|shape| (*shape).clone())
+                .unwrap_or_else(|| self.clone()),
+            SyntaxShape::Named(name, inner) => {
+                SyntaxShape::Named(name.clone(), Box::new(inner.substitute(bindings)))
+            }
+            SyntaxShape::Custom(name, args) => SyntaxShape::Custom(
+                name.clone(),
+                args.iter().map(|arg| arg.substitute(bindings)).collect(),
+            ),
+            SyntaxShape::List(inner) => SyntaxShape::List(Box::new(inner.substitute(bindings))),
+            SyntaxShape::OneOf(inner) => {
+                SyntaxShape::OneOf(inner.iter().map(|item| item.substitute(bindings)).collect())
+            }
+            SyntaxShape::Record(rows) => {
+                SyntaxShape::Record(rows.map(|item| item.substitute(bindings)))
+            }
+            SyntaxShape::Table(rows) => {
+                SyntaxShape::Table(rows.map(|item| item.substitute(bindings)))
+            }
+            SyntaxShape::Keyword(kw, inner) => {
+                SyntaxShape::Keyword(kw.clone(), Box::new(inner.substitute(bindings)))
+            }
+            _ => self.clone(),
+        }
+    }
 }
 
 impl Display for SyntaxShape {

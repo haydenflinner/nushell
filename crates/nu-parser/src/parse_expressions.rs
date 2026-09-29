@@ -686,17 +686,6 @@ pub fn parse_match_block_expression(
         output_type = output_type.union(Type::Nothing);
     }
 
-    // `input_type` here is the type of the `match` scrutinee — when it is a
-    // declared enum, check that every variant is covered by some arm.
-    if let Some(scrutinee_ty) = input_type {
-        crate::parse_type_decl::check_enum_match_exhaustiveness(
-            working_set,
-            scrutinee_ty,
-            output_matches.iter().map(|(pat, _)| pat),
-            span,
-        );
-    }
-
     Expression::new(
         working_set,
         Expr::MatchBlock(output_matches),

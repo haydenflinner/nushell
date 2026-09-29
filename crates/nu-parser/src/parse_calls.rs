@@ -1405,14 +1405,12 @@ pub fn parse_internal_call(
                             }
                         }
                         Some(SpecialCmd::If) if positional_idx >= 1 => input_type.cloned(),
-                        // `match <value> { ... }` — the match block's patterns are checked
-                        // against the type of the scrutinee (the `value` argument), which
-                        // enables exhaustiveness checking for declared enum types.
+                        // `match <value> { ... }` — the match block's arm bodies
+                        // see the pipeline input (`$in`), not the scrutinee. The
+                        // scrutinee's type is used post-parse for exhaustiveness
+                        // checking below.
                         Some(SpecialCmd::Match) if &positional.name == "match_block" => {
-                            match call.arguments.last() {
-                                Some(Argument::Positional(scrutinee)) => Some(scrutinee.ty.clone()),
-                                _ => input_type.cloned(),
-                            }
+                            input_type.cloned()
                         }
                         _ => None,
                     };
@@ -1464,6 +1462,19 @@ pub fn parse_internal_call(
 
                     match special_cmd {
                         Some(SpecialCmd::Match) if &positional.name == "match_block" => {
+                            // Exhaustiveness check for declared enum types: the
+                            // scrutinee is the previously-parsed `value`
+                            // positional, the arms live in the match block.
+                            if let Expr::MatchBlock(matches) = &expr.expr
+                                && let Some(Argument::Positional(scrutinee)) = call.arguments.last()
+                            {
+                                crate::parse_type_decl::check_enum_match_exhaustiveness(
+                                    working_set,
+                                    &scrutinee.ty,
+                                    matches.iter().map(|(pat, _)| pat),
+                                    expr.span,
+                                );
+                            }
                             output_override = Some(expr.ty.clone());
                         }
                         Some(SpecialCmd::If)

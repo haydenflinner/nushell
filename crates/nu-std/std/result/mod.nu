@@ -154,6 +154,30 @@ export def or-else [
     }
 }
 
+# Drop the `raw` field — the live error value — from an `err` payload
+# record, so the `Result` can be serialized (`to nuon`, `to json`) or
+# returned across a boundary without rethrowing the original error.
+# `ok` passes through untouched, and an `err` payload without `raw`
+# (or that isn't a record) is returned unchanged.
+#
+# Stripping is a one-way door: `raw` is what `ShellError::from_value`
+# uses to rethrow the *original* error — after `strip-raw`, rethrowing
+# fabricates a generic error from `msg` alone.
+@example "make a captured error serializable" { result try { 1 / 0 } | result strip-raw | result is-err } --result true
+@example "leave a plain err alone" { Result.err "bad" | result strip-raw | result unwrap-or-else {|e| $e} } --result "bad"
+export def strip-raw []: Result -> Result {
+    match $in {
+        Result.ok _ => $in
+        Result.err $e => {
+            if ($e | describe | str starts-with "record") {
+                Result.err ($e | reject -o raw)
+            } else {
+                Result.err $e
+            }
+        }
+    }
+}
+
 # Convert a `Result` to an `Option` — `ok` becomes `some`, the `err`
 # payload is discarded.
 @example "drop the error" { Result.err "bad" | result to-option | describe } --result "Option"

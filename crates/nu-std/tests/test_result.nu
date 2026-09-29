@@ -110,3 +110,21 @@ def result_option_conversions [] {
     assert ((Option.some 5 | result from-option "missing" | result unwrap-or 0) == 5)
     assert (Option.none | result from-option "missing" | result is-err)
 }
+
+@test
+def result_strip_raw [] {
+    use std/prelude [Result]
+    use std/result
+
+    # A captured error's `raw` field holds a live error that rethrows when
+    # it surfaces in a pipeline or serializer — `strip-raw` drops it so the
+    # Result serializes.
+    assert ((result try { 1 / 0 } | result strip-raw | to nuon --raw | str contains "division by zero") == true)
+    assert ((result try { 1 / 0 } | result strip-raw | to json --raw | str contains "DivisionByZero") == true)
+    assert ((result try { 1 / 0 } | result strip-raw | get payload | describe | str starts-with "record") == true)
+
+    # `ok`, non-record payloads, and payloads without `raw` pass through.
+    assert ((Result.ok 5 | result strip-raw | result unwrap-or 0) == 5)
+    assert ((Result.err "bad" | result strip-raw | result unwrap-or-else {|e| $e}) == "bad")
+    assert ((Result.err {msg: "bad"} | result strip-raw | result unwrap-or-else {|e| $e.msg}) == "bad")
+}

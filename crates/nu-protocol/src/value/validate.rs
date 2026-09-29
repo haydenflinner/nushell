@@ -84,6 +84,38 @@ pub fn validate_value(
     }
 }
 
+/// Parse the type-argument list of an instantiated type name into shapes —
+/// `Pair<Option>` gives `[Custom("Option")]` for binding `F`. `None` when
+/// the name isn't a well-formed `Name<args>` spelling.
+pub fn instantiation_arg_shapes(type_name: &str) -> Option<Vec<SyntaxShape>> {
+    split_instantiation(type_name.as_bytes())
+        .map(|(_, args)| args.iter().map(|a| name_to_shape(a)).collect())
+}
+
+/// Strictly check `value` against an already-parsed `shape`, collecting
+/// every mismatch with its path. Unlike `Value::is_subtype_of`, this walk
+/// is deep for declared types — a nested enum's base record is decoded and
+/// its payload checked rather than passing on name alone. Used by
+/// `enum-construct` for runtime payload checking.
+pub fn check_against_shape(
+    value: Value,
+    shape: &SyntaxShape,
+    engine_state: &EngineState,
+    removed_overlays: &[Vec<u8>],
+) -> Vec<ValidationIssue> {
+    let mut issues = vec![];
+    let mut path = Path::new();
+    check(
+        value,
+        shape,
+        engine_state,
+        removed_overlays,
+        &mut path,
+        &mut issues,
+    );
+    issues
+}
+
 /// [`validate_value`] when the type name is optional — `None` passes the
 /// value through unchanged. This is the shape `--as` flags use.
 pub fn validate_maybe(
@@ -150,6 +182,18 @@ fn check_inner(
             unfolding,
         ),
         SyntaxShape::Custom(name, args) => {
+            // An already-constructed enum value of this type passes — its
+            // payload was checked when it was built. A *different* enum's
+            // value is a definite mismatch.
+            if let Value::Custom { val, .. } = &value {
+                if let Some(ev) = val.as_any().downcast_ref::<EnumValue>() {
+                    if ev.enum_name == name.rsplit('.').next().unwrap_or(name) {
+                        return value;
+                    }
+                    issues.push(mismatch(path, shape.to_string(), &value));
+                    return value;
+                }
+            }
             let Some(type_def) = engine_state.find_type_name(name.as_bytes(), removed_overlays)
             else {
                 issues.push(mismatch(path, shape.to_string(), &value));
@@ -183,16 +227,58 @@ fn check_inner(
                             })
                             .collect(),
                     };
+                    // `from_base_record` checks the payload shallowly
+                    // (`is_subtype_of`), which deliberately treats any record
+                    // as assignable to a `Custom` type — a nested enum's base
+                    // record would pass without its payload being checked.
+                    // Walk the payload strictly here instead.
+                    let issues_before = issues.len();
+                    if let Value::Record { val, .. } = &value {
+                        if let Some(Value::String { val: kind, .. }) = val.get("kind") {
+                            if let Some(variant) =
+                                instantiated.variants.iter().find(|v| v.name == *kind)
+                            {
+                                path.push_field("payload");
+                                match (val.get("payload"), &variant.payload) {
+                                    (Some(payload_val), Some(payload_shape)) => {
+                                        let _ = check(
+                                            payload_val.clone(),
+                                            payload_shape,
+                                            engine_state,
+                                            removed_overlays,
+                                            path,
+                                            issues,
+                                        );
+                                    }
+                                    (None, Some(payload_shape)) => {
+                                        issues.push(ValidationIssue {
+                                            path: path.render(),
+                                            expected: payload_shape.to_string(),
+                                            found: "missing".into(),
+                                            span: value.span(),
+                                        });
+                                    }
+                                    _ => {}
+                                }
+                                path.pop();
+                            }
+                        }
+                    }
                     let span = value.span();
                     match EnumValue::from_base_record(value.clone(), name, &instantiated, span) {
                         Ok(decoded) => decoded,
                         Err(err) => {
-                            issues.push(ValidationIssue {
-                                path: path.render(),
-                                expected: shape.to_string(),
-                                found: err.to_string(),
-                                span,
-                            });
+                            // The strict payload walk above already reported
+                            // this node's problem with a better path — don't
+                            // double-report it as a decode failure.
+                            if issues.len() == issues_before {
+                                issues.push(ValidationIssue {
+                                    path: path.render(),
+                                    expected: shape.to_string(),
+                                    found: err.to_string(),
+                                    span,
+                                });
+                            }
                             value
                         }
                     }
@@ -465,6 +551,22 @@ fn name_to_shape(name: &[u8]) -> SyntaxShape {
         b"list" => SyntaxShape::List(Box::new(SyntaxShape::Any)),
         b"table" => SyntaxShape::Table(Default::default()),
         other => match split_instantiation(other) {
+            // Composite spellings — instantiated names like
+            // `Result<any, record<code: int>>` carry these verbatim.
+            Some((b"record", args)) => {
+                SyntaxShape::Record(args.iter().filter_map(parse_field).collect())
+            }
+            Some((b"table", args)) => {
+                SyntaxShape::Table(args.iter().filter_map(parse_field).collect())
+            }
+            Some((b"list", args)) => SyntaxShape::List(Box::new(
+                args.first()
+                    .map(|a| name_to_shape(a))
+                    .unwrap_or(SyntaxShape::Any),
+            )),
+            Some((b"oneof", args)) => {
+                SyntaxShape::OneOf(args.iter().map(|a| name_to_shape(a)).collect())
+            }
             Some((base, args)) => SyntaxShape::Custom(
                 String::from_utf8_lossy(base).into(),
                 args.iter().map(|a| name_to_shape(a)).collect(),
@@ -472,4 +574,15 @@ fn name_to_shape(name: &[u8]) -> SyntaxShape {
             None => SyntaxShape::Custom(String::from_utf8_lossy(other).into(), vec![]),
         },
     }
+}
+
+/// Split a `field: shape` spelling inside `record<...>`/`table<...>`
+/// arguments into (name, shape).
+fn parse_field(field: &&[u8]) -> Option<(String, SyntaxShape)> {
+    let colon = field.iter().position(|&b| b == b':')?;
+    let (name, field_shape) = field.split_at(colon);
+    Some((
+        String::from_utf8_lossy(trim_ascii(name)).into_owned(),
+        name_to_shape(trim_ascii(&field_shape[1..])),
+    ))
 }

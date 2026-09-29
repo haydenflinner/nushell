@@ -235,10 +235,20 @@ impl SyntaxShape {
             SyntaxShape::Named(name, inner) => {
                 SyntaxShape::Named(name.clone(), Box::new(inner.substitute(bindings)))
             }
-            SyntaxShape::Custom(name, args) => SyntaxShape::Custom(
-                name.clone(),
-                args.iter().map(|arg| arg.substitute(bindings)).collect(),
-            ),
+            SyntaxShape::Custom(name, args) => {
+                let args = args.iter().map(|arg| arg.substitute(bindings)).collect();
+                // `F<int>` where `F` is a bound type-constructor parameter
+                // (`F` ↔ `Custom("Option", _)`) applies the constructor:
+                // `Option<int>`.
+                match bindings.get(name.as_ref()) {
+                    Some(SyntaxShape::Custom(ctor, _)) => SyntaxShape::Custom(ctor.clone(), args),
+                    // An unbound-in-practice constructor (`F` bound to `any`
+                    // under a bare generic constructor) erases the
+                    // application.
+                    Some(SyntaxShape::Any) => SyntaxShape::Any,
+                    _ => SyntaxShape::Custom(name.clone(), args),
+                }
+            }
             SyntaxShape::List(inner) => SyntaxShape::List(Box::new(inner.substitute(bindings))),
             SyntaxShape::OneOf(inner) => {
                 SyntaxShape::OneOf(inner.iter().map(|item| item.substitute(bindings)).collect())

@@ -1,5 +1,5 @@
 use nu_engine::command_prelude::*;
-use nu_protocol::{EnumValue, TypeDefKind, shell_error::generic::GenericError};
+use nu_protocol::{EnumDef, EnumValue, TypeDefKind, shell_error::generic::GenericError};
 
 /// Rebuilds a value of a user-declared `enum` type from its base record.
 ///
@@ -45,7 +45,11 @@ impl Command for EnumFromRecord {
         let type_name: String = call.req(engine_state, stack, 0)?;
         let record: Value = call.req(engine_state, stack, 1)?;
 
-        let Some(type_def) = engine_state.find_type_name(type_name.as_bytes(), &[]) else {
+        // `type_name` may carry an instantiation (`Pair<Option>`) — look up
+        // the base name, and substitute the arguments into the declared
+        // variant payloads before validating the base record.
+        let lookup_name = type_name.split('<').next().unwrap_or(&type_name);
+        let Some(type_def) = engine_state.find_type_name(lookup_name.as_bytes(), &[]) else {
             return Err(GenericError::new(
                 format!("unknown type `{type_name}`"),
                 "no `type` declaration with this name is in scope",
@@ -63,8 +67,27 @@ impl Command for EnumFromRecord {
             .into());
         };
 
+        let arg_shapes =
+            nu_protocol::validate::instantiation_arg_shapes(&type_name).unwrap_or_default();
+        let bindings: std::collections::HashMap<&str, &SyntaxShape> = type_def
+            .params
+            .iter()
+            .map(String::as_str)
+            .zip(arg_shapes.iter())
+            .collect();
+        let instantiated = EnumDef {
+            variants: enum_def
+                .variants
+                .iter()
+                .map(|v| nu_protocol::EnumVariant {
+                    name: v.name.clone(),
+                    payload: v.payload.as_ref().map(|p| p.substitute(&bindings)),
+                })
+                .collect(),
+        };
+
         let enum_name = String::from_utf8_lossy(&type_def.name).to_string();
-        EnumValue::from_base_record(record, &enum_name, enum_def, call.head)
+        EnumValue::from_base_record(record, &enum_name, &instantiated, call.head)
             .map(|v| v.into_pipeline_data())
     }
 }

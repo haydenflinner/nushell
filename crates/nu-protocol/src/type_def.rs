@@ -12,6 +12,12 @@ pub struct TypeDef {
     /// Type parameters declared in `struct Name<T, U> = ...`. Empty for
     /// non-generic declarations.
     pub params: Vec<String>,
+    /// The subset of `params` declared as type *constructors* —
+    /// `type Pair<F<_>>` puts `F` here. A constructor parameter is applied
+    /// in the right-hand side (`F<int>`) and bound at instantiation to the
+    /// *name* of a declared type (`Pair<Option>` binds `F = Option`).
+    /// Empty for ordinary declarations.
+    pub ctor_params: Vec<String>,
     pub kind: TypeDefKind,
 }
 

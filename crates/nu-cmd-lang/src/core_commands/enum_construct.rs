@@ -42,7 +42,11 @@ impl Command for EnumConstruct {
         let variant_name: String = call.req(engine_state, stack, 1)?;
         let payload: Option<Value> = call.opt(engine_state, stack, 2)?;
 
-        let Some(type_def) = engine_state.find_type_name(type_name.as_bytes(), &[]) else {
+        // `type_name` may carry an instantiation (`Pair<Option>`) — look up
+        // the base name, and use the arguments to substitute into payload
+        // shapes below.
+        let lookup_name = type_name.split('<').next().unwrap_or(&type_name);
+        let Some(type_def) = engine_state.find_type_name(lookup_name.as_bytes(), &[]) else {
             return Err(GenericError::new(
                 format!("unknown type `{type_name}`"),
                 "no `type` declaration with this name is in scope",
@@ -79,11 +83,45 @@ impl Command for EnumConstruct {
 
         match (&variant.payload, payload) {
             (Some(shape), Some(payload)) => {
-                let expected = shape.to_type();
+                // Instantiate the declared payload with the type arguments
+                // carried by `type_name` — `Pair<Option>.pair` checks its
+                // `F<int>`-typed fields against `Option<int>`.
+                let arg_shapes =
+                    nu_protocol::validate::instantiation_arg_shapes(&type_name).unwrap_or_default();
+                let bindings: std::collections::HashMap<&str, &SyntaxShape> = type_def
+                    .params
+                    .iter()
+                    .map(String::as_str)
+                    .zip(arg_shapes.iter())
+                    .collect();
+                let expected_shape = shape.substitute(&bindings);
+                let expected = expected_shape.to_type();
                 if !payload.get_type().is_subtype_of(&expected) {
                     return Err(ShellError::CantConvert {
                         to_type: expected.to_string(),
                         from_type: payload.get_type().to_string(),
+                        span: payload.span(),
+                        help: Some(format!(
+                            "variant `{variant_name}` of `{type_name}` expects {expected}"
+                        )),
+                    });
+                }
+                // `is_subtype_of` deliberately treats any record as
+                // assignable to a `Custom` type — a nested `{kind, payload}`
+                // record would pass without its own payload being checked.
+                // Walk the payload strictly to catch those.
+                if let Some(issue) = nu_protocol::validate::check_against_shape(
+                    payload.clone(),
+                    &expected_shape,
+                    engine_state,
+                    &[],
+                )
+                .into_iter()
+                .next()
+                {
+                    return Err(ShellError::CantConvert {
+                        to_type: format!("{} at {}", issue.expected, issue.path),
+                        from_type: issue.found,
                         span: payload.span(),
                         help: Some(format!(
                             "variant `{variant_name}` of `{type_name}` expects {expected}"

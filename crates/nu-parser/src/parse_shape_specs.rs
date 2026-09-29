@@ -70,6 +70,29 @@ pub fn parse_shape_name(
                 return SyntaxShape::TypeVar(name.into());
             }
 
+            // `F<arg>` where `F` is a type-constructor parameter of the
+            // `type` declaration being parsed (`type Pair<F<_>>`) — a
+            // type-level application, substituted at instantiation.
+            if let Some(lt) = bytes.iter().position(|&b| b == b'<')
+                && bytes.ends_with(b">")
+                && let Ok(base) = std::str::from_utf8(&bytes[..lt])
+                && working_set.type_ctor_params.iter().any(|p| p == base)
+            {
+                let inner = &bytes[lt + 1..bytes.len() - 1];
+                let args = split_top_level_commas(inner)
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|arg| {
+                        let arg = arg.trim_ascii();
+                        let offset = arg.as_ptr() as usize - bytes.as_ptr() as usize;
+                        let arg_span =
+                            Span::new(span.start + offset, span.start + offset + arg.len());
+                        parse_shape_name(working_set, arg, arg_span)
+                    })
+                    .collect();
+                return SyntaxShape::Custom(base.into(), args);
+            }
+
             // `Name<arg, ...>` instantiates a generic `type` declaration.
             if bytes.contains(&b'<')
                 && let Some(shape) = parse_generic_instantiation(working_set, bytes, span)

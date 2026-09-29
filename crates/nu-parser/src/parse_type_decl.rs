@@ -151,15 +151,27 @@ fn split_generic_name(bytes: &[u8]) -> Option<(&[u8], Vec<&[u8]>)> {
                 return None;
             }
             let params = split_top_level_commas(&inner[..inner.len() - 1])?;
-            if params
-                .iter()
-                .any(|p| p.contains(&b'<') || p.contains(&b'>') || p.is_empty())
-            {
+            if params.iter().any(|p| {
+                p.is_empty() || (p.contains(&b'<') || p.contains(&b'>')) && !is_ctor_param(p)
+            }) {
                 return None;
             }
             Some((base, params))
         }
     }
+}
+
+/// Whether `param` declares a type-constructor parameter — `F<_>` or
+/// `F<_, _, ...>` — in a generic declaration's parameter list.
+fn is_ctor_param(param: &[u8]) -> bool {
+    let Some(lt) = param.iter().position(|&b| b == b'<') else {
+        return false;
+    };
+    let inner = &param[lt + 1..];
+    inner.ends_with(b">")
+        && split_top_level_commas(&inner[..inner.len() - 1])
+            .is_some_and(|holes| holes.iter().all(|h| h.trim_ascii() == b"_"))
+        && is_valid_type_name(&param[..lt])
 }
 
 /// Parse a `type` declaration:
@@ -226,8 +238,22 @@ pub fn parse_type_decl(
 
     // `struct Name<T, U> = ...` — generic type parameters. The list is optional;
     // names must be non-empty, unique, and must not shadow built-in type names.
-    let (name, params) = match split_generic_name(&name) {
+    // `F<_>` declares a type-constructor parameter instead.
+    let (name, params, ctor_params) = match split_generic_name(&name) {
         Some((base, params)) => {
+            let mut ctor_params: Vec<String> = vec![];
+            let params: Vec<&[u8]> = params
+                .iter()
+                .map(|param| {
+                    if is_ctor_param(param) {
+                        let lt = param.iter().position(|&b| b == b'<').unwrap_or(0);
+                        ctor_params.push(String::from_utf8_lossy(&param[..lt]).to_string());
+                        &param[..lt]
+                    } else {
+                        *param
+                    }
+                })
+                .collect();
             for param in &params {
                 let param_str = String::from_utf8_lossy(param);
                 if !is_valid_type_name(param) {
@@ -266,6 +292,7 @@ pub fn parse_type_decl(
                     .iter()
                     .map(|p| String::from_utf8_lossy(p).to_string())
                     .collect::<Vec<String>>(),
+                ctor_params,
             )
         }
         None => {
@@ -368,7 +395,19 @@ pub fn parse_type_decl(
 
     // Type parameters are in scope only while the right-hand side is parsed —
     // `some: T` in `enum<some: T, none>` resolves to `SyntaxShape::TypeVar`.
-    let saved_params = std::mem::replace(&mut working_set.type_params, params.clone());
+    // Type-*constructor* parameters (`F<_>`) are scoped separately — plain
+    // params resolve bare names to `TypeVar`, while `F<arg>` parses as a
+    // type-level application `Custom("F", [arg])` substituted later.
+    let saved_params = std::mem::replace(
+        &mut working_set.type_params,
+        params
+            .iter()
+            .filter(|p| !ctor_params.contains(p))
+            .cloned()
+            .collect(),
+    );
+    let saved_ctor_params =
+        std::mem::replace(&mut working_set.type_ctor_params, ctor_params.clone());
 
     // Pre-register the name so the right-hand side can self-reference —
     // `struct Json { kids: list<Json> }`. Self-references resolve to a
@@ -379,6 +418,7 @@ pub fn parse_type_decl(
         TypeDef {
             name: name.clone(),
             params: params.clone(),
+            ctor_params: ctor_params.clone(),
             kind: TypeDefKind::Enum(EnumDef { variants: vec![] }),
         },
     );
@@ -391,6 +431,7 @@ pub fn parse_type_decl(
             None => working_set.remove_type(&name),
         }
         working_set.type_params = saved_params.clone();
+        working_set.type_ctor_params = saved_ctor_params.clone();
     };
 
     let kind = if rhs == b"enum" || rhs.starts_with(b"enum<") {
@@ -422,10 +463,12 @@ pub fn parse_type_decl(
     };
 
     working_set.type_params = saved_params;
+    working_set.type_ctor_params = saved_ctor_params;
 
     let type_def = Arc::new(TypeDef {
         name: name.clone(),
         params,
+        ctor_params,
         kind,
     });
 
@@ -665,10 +708,12 @@ pub fn parse_enum_constructor(
 
     let variant_name_str = String::from_utf8_lossy(variant_name).to_string();
     let type_name_str = String::from_utf8_lossy(&type_def.name).to_string();
-    // The name as written is what the runtime command resolves; the
-    // canonical `type_def.name` is what values and signature checks report.
-    // Generic arguments are erased at runtime.
-    let type_path_str = String::from_utf8_lossy(base_name).to_string();
+    // The name as written is what the runtime command resolves — including
+    // the `<...>` instantiation so payload checks substitute type arguments
+    // (`Pair<Option>.pair` checks `F<int>` fields against `Option<int>`).
+    // The canonical `type_def.name` is what values and signature checks
+    // report.
+    let type_path_str = String::from_utf8_lossy(type_name).to_string();
 
     if !type_args.is_empty() && type_args.len() != type_def.params.len() {
         working_set.error(ParseError::IncorrectValue(
@@ -866,11 +911,24 @@ pub fn parse_enum_constructor(
         args.push(Argument::Positional(payload));
     }
 
+    // Runtime name for `enum-construct`: the written (possibly
+    // module-qualified) path keeps its `<...>` when explicitly
+    // instantiated; for a bare constructor (`Pair.pair`) the inferred
+    // arguments are appended so payload checks substitute them
+    // (`Pair<Option>` checks `F<int>` fields against `Option<int>`).
+    let runtime_name = if type_path_str.contains('<') {
+        type_path_str.clone()
+    } else if let Some(i) = output_name.find('<') {
+        format!("{type_path_str}{}", &output_name[i..])
+    } else {
+        type_path_str.clone()
+    };
+    let output_ty = Type::Custom(output_name.clone().into());
     enum_internal_call(
         working_set,
         ENUM_CONSTRUCT_DECL,
-        &type_path_str,
-        Type::Custom(output_name.into()),
+        &runtime_name,
+        output_ty,
         head_span,
         call_span,
         args,
@@ -897,6 +955,17 @@ fn infer_type_args(
         }
         (SyntaxShape::Named(_, inner), _) => {
             infer_type_args(working_set, inner, ty, span, bindings)
+        }
+        // `F<...>` against a custom type where `F` is not itself a declared
+        // type — `F` is a type-constructor parameter; bind it to the value's
+        // constructor (`F<_, ...>` vs `Option<int>` binds `F` to `Option`).
+        (SyntaxShape::Custom(head, _), Type::Custom(name))
+            if working_set.find_type_name(head.as_bytes()).is_none() =>
+        {
+            let base = name.split('<').next().unwrap_or(name);
+            bindings
+                .entry(head.to_string())
+                .or_insert_with(|| Type::Custom(base.into()));
         }
         (SyntaxShape::Custom(_, arg_shapes), Type::Custom(name)) => {
             if let Some(lt) = name.find('<')

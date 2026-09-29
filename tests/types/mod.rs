@@ -792,3 +792,70 @@ fn generic_two_param_match_is_exhaustive() -> Result {
         )
         .expect_value_eq(7)
 }
+
+// ---------------------------------------------------------------------------
+// Higher-kinded type parameters: `type Pair<F<_>>` takes a type *constructor*
+// and applies it inside the definition — `Pair<Option>` binds `F` to
+// `Option`, so `F<int>` in the body means `Option<int>`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn hkt_constructor_application_in_payload() -> Result {
+    test()
+        .run(
+            r#"enum Option<T> { some: T, none }; enum Pair<F<_>> { pair: record<a: F<int>, b: F<string>> }; def f [p: Pair<Option>] { $p }; f (Pair<Option>.pair {a: (Option.some 5), b: (Option.some "x")}) | describe"#,
+        )
+        .expect_value_eq("Pair")
+}
+
+#[test]
+fn hkt_wrong_constructor_is_error() -> Result {
+    // `b` expects `F<string>` = `Option<string>` — `Option.some 5` is wrong.
+    test()
+        .run(
+            r#"enum Option<T> { some: T, none }; enum Pair<F<_>> { pair: record<a: F<int>, b: F<string>> }; def f [p: Pair<Option>] { $p }; f (Pair<Option>.pair {a: (Option.some 5), b: (Option.some 5)})"#,
+        )
+        .expect_parse_error()
+        .map(drop)
+}
+
+#[test]
+fn hkt_bare_constructor_infers_head() -> Result {
+    // `Pair.pair` without `<...>` infers `F = Option` from the payload.
+    test()
+        .run(
+            r#"enum Option<T> { some: T, none }; enum Pair<F<_>> { pair: record<a: F<int>, b: F<string>> }; (Pair.pair {a: (Option.some 5), b: (Option.some "x")}) | describe"#,
+        )
+        .expect_value_eq("Pair")
+}
+
+#[test]
+fn hkt_match_arm_binds_instantiated_payload() -> Result {
+    // `F = Option` substitutes into the arm's pattern bindings.
+    test()
+        .run(
+            r#"enum Option<T> { some: T, none }; enum Pair<F<_>> { pair: record<a: F<int>, b: F<string>> }; def f [p: Pair<Option>]: nothing -> int { match $p { Pair.pair {a: $x, b: _} => (match $x { Option.some $v => $v, Option.none => 0 }) } }; f (Pair<Option>.pair {a: (Option.some 9), b: (Option.none)})"#,
+        )
+        .expect_value_eq(9)
+}
+
+#[test]
+fn hkt_as_validation() -> Result {
+    // `--as` substitutes constructor bindings too: the nested `some`
+    // payload must be an `int`, not a `string`.
+    test()
+        .run(
+            r#"enum Option<T> { some: T, none }; enum Pair<F<_>> { pair: record<a: F<int>, b: F<string>> }; "{\"kind\": \"pair\", \"payload\": {\"a\": {\"kind\": \"some\", \"payload\": 7}, \"b\": {\"kind\": \"none\"}}}" | from json --as "Pair<Option>" | describe"#,
+        )
+        .expect_value_eq("Pair")
+}
+
+#[test]
+fn hkt_as_validation_rejects_bad_nested_payload() -> Result {
+    test()
+        .run(
+            r#"enum Option<T> { some: T, none }; enum Pair<F<_>> { pair: record<a: F<int>, b: F<string>> }; "{\"kind\": \"pair\", \"payload\": {\"a\": {\"kind\": \"some\", \"payload\": \"s\"}, \"b\": {\"kind\": \"none\"}}}" | from json --as "Pair<Option>""#,
+        )
+        .expect_error()
+        .map(drop)
+}

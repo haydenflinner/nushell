@@ -39,7 +39,7 @@ impl Command for IntoDecimal {
     }
 
     fn search_terms(&self) -> Vec<&str> {
-        vec!["convert", "number", "decimal", "precision"]
+        vec!["convert", "number", "precision"]
     }
 
     fn run(

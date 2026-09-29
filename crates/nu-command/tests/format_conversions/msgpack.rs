@@ -207,6 +207,7 @@ fn decimal_tagged_string_in_map_key_stays_string() -> Result {
     Ok(())
 }
 
+#[test]
 fn u64_too_large() -> Result {
     let shell_error = msgpack_test("u64-too-large").expect_error()?;
     let error = shell_error.generic_error()?;

@@ -359,7 +359,10 @@ pub fn parse_mut(working_set: &mut StateWorkingSet, spans: &[Span]) -> Pipeline 
                     if let Some(var_id) = var_id
                         && explicit_type.is_none()
                     {
-                        working_set.set_variable_type(var_id, rhs_type);
+                        // `null` in the initializer is a placeholder for a
+                        // later assignment, not a constraint that the position
+                        // must stay `nothing` (#18953).
+                        working_set.set_variable_type(var_id, rhs_type.loosen_nothing());
                     }
 
                     let call = Box::new(Call {

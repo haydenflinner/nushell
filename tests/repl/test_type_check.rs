@@ -480,3 +480,63 @@ fn closure_body_input_type_not_inherited_from_surrounding_command() -> Result {
     let () = tester.run(code)?;
     tester.run("cmd foo").expect_value_eq("foobar")
 }
+
+#[test]
+#[exp(ENFORCE_RUNTIME_ANNOTATIONS)]
+fn mut_record_null_field_is_reassignable() -> Result {
+    // https://github.com/nushell/nushell/issues/18953 — `null` in an
+    // initializer is a placeholder, not a `nothing` type constraint.
+    let code = r#"
+        mut j = { a: 10, b: "aaa", c: null }
+        $j.c = "hello"
+        $j.c = 1
+        $j | describe
+    "#;
+    test()
+        .run(code)
+        .expect_value_eq("record<a: int, b: string, c: int>")
+}
+
+#[test]
+#[exp(ENFORCE_RUNTIME_ANNOTATIONS)]
+fn mut_null_scalar_is_reassignable() -> Result {
+    test().run("mut x = null; $x = 5; $x").expect_value_eq(5)
+}
+
+#[test]
+#[exp(ENFORCE_RUNTIME_ANNOTATIONS)]
+fn mut_list_null_element_is_reassignable() -> Result {
+    test()
+        .run("mut l = [1, null]; $l.1 = 's'; $l.1")
+        .expect_value_eq("s")
+}
+
+#[test]
+#[exp(ENFORCE_RUNTIME_ANNOTATIONS)]
+fn mut_table_null_cell_is_reassignable() -> Result {
+    test()
+        .run("mut t = [[a b]; [1 null]]; $t.b.0 = 2; $t.b.0")
+        .expect_value_eq(2)
+}
+
+#[test]
+#[exp(ENFORCE_RUNTIME_ANNOTATIONS)]
+fn mut_explicit_nothing_annotation_still_enforced() -> Result {
+    // An explicit `nothing` annotation is a real constraint, not inference.
+    let err = test()
+        .run(r#"mut j: record<c: nothing> = {c: null}; $j.c = "x""#)
+        .expect_shell_error()?;
+    assert_eq!(err.code().unwrap().to_string(), "nu::shell::type_mismatch");
+    Ok(())
+}
+
+#[test]
+#[exp(ENFORCE_RUNTIME_ANNOTATIONS)]
+fn mut_non_null_fields_still_type_checked() -> Result {
+    // Widening only affects `nothing` positions — inferred `int` stays `int`.
+    let err = test()
+        .run(r#"mut j = { a: 10, c: null }; $j.a = "x""#)
+        .expect_shell_error()?;
+    assert_eq!(err.code().unwrap().to_string(), "nu::shell::type_mismatch");
+    Ok(())
+}

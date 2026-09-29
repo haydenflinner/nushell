@@ -121,6 +121,31 @@ impl Type {
         Self::OneOf(OneOf::from_iter(types))
     }
 
+    /// Replaces `nothing` with `any`, recursing through list elements, record
+    /// fields, table columns, and `oneof` members. A `oneof` that gains `any`
+    /// this way collapses to `any`.
+    ///
+    /// Used for the inferred type of a `mut` variable: `null` in an
+    /// initializer is a placeholder for a value assigned later, not a
+    /// constraint that the position can only ever be `nothing` (see #18953).
+    pub fn loosen_nothing(self) -> Self {
+        match self {
+            Type::Nothing => Type::Any,
+            Type::List(inner) => Type::List(Box::new(inner.loosen_nothing())),
+            Type::Record(fields) => Type::Record(fields.map(|ty| ty.clone().loosen_nothing())),
+            Type::Table(columns) => Type::Table(columns.map(|ty| ty.clone().loosen_nothing())),
+            Type::OneOf(oneof) => {
+                let widened: Vec<Type> = oneof.into_iter().map(Type::loosen_nothing).collect();
+                if widened.iter().any(|ty| matches!(ty, Type::Any)) {
+                    Type::Any
+                } else {
+                    Type::one_of(widened)
+                }
+            }
+            ty => ty,
+        }
+    }
+
     pub fn record() -> Self {
         Self::Record(Default::default())
     }

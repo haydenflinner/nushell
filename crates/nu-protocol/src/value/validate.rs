@@ -2,7 +2,7 @@ use crate::{
     CompareTypes, EnumDef, EnumValue, ShellError, Span, SyntaxShape, TypeDefKind, Value,
     engine::EngineState, shell_error::generic::GenericError,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// A single type mismatch found while validating a value against a declared
 /// type: where in the value, what was expected, what was found.
@@ -108,14 +108,47 @@ fn check(
     path: &mut Path,
     issues: &mut Vec<ValidationIssue>,
 ) -> Value {
+    check_inner(
+        value,
+        shape,
+        engine_state,
+        removed_overlays,
+        path,
+        issues,
+        &mut HashSet::new(),
+    )
+}
+
+/// [`check`] with an `unfolding` set of alias names currently being expanded
+/// at this value position. `Named`/`Custom`-alias chains recurse through
+/// here (sharing the set, so `struct A = A` is caught), while descent into
+/// record fields and list elements re-enters through [`check`] with a fresh
+/// set — a recursive type legitimately revisited at a deeper value is not a
+/// cycle.
+#[expect(clippy::too_many_arguments)]
+fn check_inner(
+    value: Value,
+    shape: &SyntaxShape,
+    engine_state: &EngineState,
+    removed_overlays: &[Vec<u8>],
+    path: &mut Path,
+    issues: &mut Vec<ValidationIssue>,
+    unfolding: &mut std::collections::HashSet<Box<str>>,
+) -> Value {
     if issues.len() >= MAX_ISSUES {
         return value;
     }
 
     match shape {
-        SyntaxShape::Named(_, inner) => {
-            check(value, inner, engine_state, removed_overlays, path, issues)
-        }
+        SyntaxShape::Named(_, inner) => check_inner(
+            value,
+            inner,
+            engine_state,
+            removed_overlays,
+            path,
+            issues,
+            unfolding,
+        ),
         SyntaxShape::Custom(name, args) => {
             let Some(type_def) = engine_state.find_type_name(name.as_bytes(), removed_overlays)
             else {
@@ -165,8 +198,27 @@ fn check(
                     }
                 }
                 TypeDefKind::Alias(inner) => {
+                    if !unfolding.insert(name.clone()) {
+                        issues.push(ValidationIssue {
+                            path: path.render(),
+                            expected: shape.to_string(),
+                            found: format!("recursive type alias `{name}`"),
+                            span: value.span(),
+                        });
+                        return value;
+                    }
                     let inner = inner.substitute(&bindings);
-                    check(value, &inner, engine_state, removed_overlays, path, issues)
+                    let value = check_inner(
+                        value,
+                        &inner,
+                        engine_state,
+                        removed_overlays,
+                        path,
+                        issues,
+                        unfolding,
+                    );
+                    unfolding.remove(name);
+                    value
                 }
             }
         }

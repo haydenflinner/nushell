@@ -480,6 +480,70 @@ fn payload_binder_plain_record_pattern() -> Result {
         .expect_value_eq(3)
 }
 
+// Recursive named types (`struct Json { kids: list<Json> }`)
+
+#[test]
+fn recursive_alias_parses() -> Result {
+    test()
+        .run("struct Json { name: string, kids: list<Json> }; 1 + 1")
+        .expect_value_eq(2)
+}
+
+#[test]
+fn recursive_alias_accepts_nested_literal() -> Result {
+    test()
+        .run(
+            r#"struct Json { name: string, kids: list<Json> }; def f [x: Json] { $x.kids.0.name }; f {name: "a", kids: [{name: "b", kids: []}]}"#,
+        )
+        .expect_value_eq("b")
+}
+
+#[test]
+fn recursive_alias_let_annotation() -> Result {
+    test()
+        .run(
+            r#"struct Json { name: string, kids: list<Json> }; let x: Json = {name: "a", kids: [{name: "b", kids: []}]}; $x.kids.0.name"#,
+        )
+        .expect_value_eq("b")
+}
+
+#[test]
+fn recursive_alias_validates_deep_paths() -> Result {
+    test()
+        .run(
+            r#"struct Json { name: string, kids: list<Json> }; "{\"name\":\"a\",\"kids\":[{\"name\":\"b\",\"kids\":\"oops\"}]}" | from json --as Json"#,
+        )
+        .expect_shell_error()
+        .map(drop)
+}
+
+#[test]
+fn recursive_enum_evaluates() -> Result {
+    test()
+        .run(
+            r#"enum Tree { leaf: int, node: list<Tree> }; def size [t: Tree] { match $t { Tree.leaf $v => $v, Tree.node $kids => ($kids | each {|k| size $k } | math sum) } }; size (Tree.node [(Tree.leaf 1), (Tree.node [(Tree.leaf 2)])])"#,
+        )
+        .expect_value_eq(3)
+}
+
+#[test]
+fn recursive_generic_enum() -> Result {
+    test()
+        .run(
+            r#"enum Tree<T> { leaf: T, node: list<Tree<T>> }; def f [t: Tree<int>] { match $t { Tree.leaf $v => $v, Tree.node _ => 0 } }; f (Tree.node [(Tree.leaf 7)])"#,
+        )
+        .expect_value_eq(0)
+}
+
+#[test]
+fn cyclic_alias_is_a_validation_error_not_a_hang() -> Result {
+    // `struct A = A` is degenerate; `--as` must report it, not loop.
+    test()
+        .run(r#"struct A = A; "5" | from json --as A"#)
+        .expect_shell_error()
+        .map(drop)
+}
+
 // Union type declarations (`struct Name = a | b`)
 
 #[test]

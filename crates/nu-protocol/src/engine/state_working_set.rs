@@ -182,9 +182,21 @@ impl<'a> StateWorkingSet<'a> {
     }
 
     /// Register a named type declared with the `type` keyword in the current overlay.
-    pub fn add_type(&mut self, name: Vec<u8>, type_def: crate::TypeDef) {
+    ///
+    /// Returns the displaced definition when `name` was already declared.
+    pub fn add_type(
+        &mut self,
+        name: Vec<u8>,
+        type_def: crate::TypeDef,
+    ) -> Option<Arc<crate::TypeDef>> {
         self.last_overlay_mut()
-            .insert_type(name, Arc::new(type_def));
+            .insert_type(name, Arc::new(type_def))
+    }
+
+    /// Remove a named type from the current overlay — used to roll back a
+    /// pre-registered name when its `type` declaration fails to parse.
+    pub fn remove_type(&mut self, name: &[u8]) {
+        self.last_overlay_mut().types.remove(name);
     }
 
     /// Import named types into the current overlay (used by `use`).

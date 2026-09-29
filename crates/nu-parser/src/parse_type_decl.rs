@@ -370,11 +370,34 @@ pub fn parse_type_decl(
     // `some: T` in `enum<some: T, none>` resolves to `SyntaxShape::TypeVar`.
     let saved_params = std::mem::replace(&mut working_set.type_params, params.clone());
 
+    // Pre-register the name so the right-hand side can self-reference —
+    // `struct Json { kids: list<Json> }`. Self-references resolve to a
+    // lazy `SyntaxShape::Custom`, so recursion is by-name rather than by
+    // inlining; the real definition replaces this placeholder below.
+    let displaced = working_set.add_type(
+        name.clone(),
+        TypeDef {
+            name: name.clone(),
+            params: params.clone(),
+            kind: TypeDefKind::Enum(EnumDef { variants: vec![] }),
+        },
+    );
+
+    let rollback = |working_set: &mut StateWorkingSet| {
+        match displaced {
+            Some(prev) => {
+                working_set.add_type(name.clone(), (*prev).clone());
+            }
+            None => working_set.remove_type(&name),
+        }
+        working_set.type_params = saved_params.clone();
+    };
+
     let kind = if rhs == b"enum" || rhs.starts_with(b"enum<") {
         match parse_enum_def(working_set, &rhs, rhs_span) {
             Some(enum_def) => TypeDefKind::Enum(enum_def),
             None => {
-                working_set.type_params = saved_params;
+                rollback(working_set);
                 return (garbage_pipeline(working_set, spans), None);
             }
         }

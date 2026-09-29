@@ -1,4 +1,4 @@
-use nu_protocol::test_record;
+use nu_protocol::{Span, record, test_record};
 use nu_test_support::{fs::Stub::FileWithContentToBeTrimmed, prelude::*};
 use rstest::rstest;
 
@@ -22,6 +22,41 @@ fn table_to_json_float_doesnt_become_int() -> Result {
     let code = "[[a]; [1.0]] | to json | from json | get 0.a";
     let outcome: Value = test().run(code)?;
     assert!(matches!(outcome, Value::Float { .. }));
+    Ok(())
+}
+
+#[test]
+fn decimal_roundtrips_through_json_without_precision_loss() -> Result {
+    let code = "'0.1234567890123456789012345' | into decimal | to json | from json";
+    let outcome: Value = test().run(code)?;
+    let expected = rust_decimal::Decimal::from_str_exact("0.1234567890123456789012345").unwrap();
+    assert_eq!(outcome, Value::decimal(expected, Span::test_data()));
+    Ok(())
+}
+
+#[test]
+fn decimal_tagged_string_in_object_key_stays_string() -> Result {
+    // Only values may be decoded as decimal; a key starting with the tag
+    // prefix must remain a string.
+    test()
+        .run(r#"{"!decimal:9": "!decimal:4"} | to json | from json | columns | first"#)
+        .expect_value_eq("!decimal:9")
+}
+
+#[test]
+fn nested_decimal_roundtrips_through_json() -> Result {
+    let code =
+        "{a: [('1.5' | into decimal)], b: {c: ('2.25' | into decimal)}} | to json | from json";
+    let outcome: Value = test().run(code)?;
+    let expected = Value::test_record(record! {
+        "a" => Value::test_list(vec![
+            Value::decimal(rust_decimal::Decimal::new(15, 1), Span::test_data()),
+        ]),
+        "b" => Value::test_record(record! {
+            "c" => Value::decimal(rust_decimal::Decimal::new(225, 2), Span::test_data()),
+        }),
+    });
+    assert_eq!(outcome, expected);
     Ok(())
 }
 

@@ -1,6 +1,7 @@
 use std::{collections::HashMap, fmt::Debug, path::PathBuf, sync::LazyLock};
 
 use chrono::DateTime;
+use nu_protocol::Span;
 use nu_test_support::prelude::*;
 use pretty_assertions::assert_eq;
 
@@ -184,6 +185,28 @@ fn reserved() -> Result {
 }
 
 #[test]
+fn decimal_roundtrips_through_msgpack_without_precision_loss() -> Result {
+    let code = "'0.1234567890123456789012345' | into decimal | to msgpack | from msgpack";
+    let outcome: Value = test().run(code)?;
+    let expected = rust_decimal::Decimal::from_str_exact("0.1234567890123456789012345").unwrap();
+    assert_eq!(outcome, Value::decimal(expected, Span::test_data()));
+    Ok(())
+}
+
+#[test]
+fn decimal_tagged_string_in_map_key_stays_string() -> Result {
+    // Map keys must never be decoded as decimals, even though map values are.
+    let code = r#"{"!decimal:9": "!decimal:4"} | to msgpack | from msgpack"#;
+    let outcome: Value = test().run(code)?;
+    let record = outcome.as_record()?;
+    assert_eq!(record.columns().next().unwrap(), "!decimal:9");
+    assert_eq!(
+        record.get("!decimal:9").unwrap(),
+        &Value::decimal(rust_decimal::Decimal::new(4, 0), Span::test_data())
+    );
+    Ok(())
+}
+
 fn u64_too_large() -> Result {
     let shell_error = msgpack_test("u64-too-large").expect_error()?;
     let error = shell_error.generic_error()?;

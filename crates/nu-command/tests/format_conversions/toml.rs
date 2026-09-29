@@ -1,3 +1,4 @@
+use nu_protocol::Span;
 use nu_test_support::prelude::*;
 
 #[test]
@@ -93,4 +94,22 @@ fn big_record_to_toml_text_and_from_toml_text_back_into_record() -> Result {
         .cwd("tests/fixtures/formats")
         .run(code)
         .expect_value_eq("nu")
+}
+
+#[test]
+fn decimal_roundtrips_through_toml_without_precision_loss() -> Result {
+    let code = "{n: ('0.1234567890123456789012345' | into decimal)} | to toml | from toml | get n";
+    let outcome: Value = test().run(code)?;
+    let expected = rust_decimal::Decimal::from_str_exact("0.1234567890123456789012345").unwrap();
+    assert_eq!(outcome, Value::decimal(expected, Span::test_data()));
+    Ok(())
+}
+
+#[test]
+fn toml_string_that_is_not_a_decimal_stays_string() -> Result {
+    // A string that merely starts with the tag but has no valid decimal
+    // payload must not be converted.
+    test()
+        .run(r#""n = '!decimal:abc'" | from toml | get n"#)
+        .expect_value_eq("!decimal:abc")
 }

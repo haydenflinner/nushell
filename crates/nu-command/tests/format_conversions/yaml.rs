@@ -1,5 +1,5 @@
 use indoc::indoc;
-use nu_protocol::{Record, test_record};
+use nu_protocol::{Record, Span, test_record};
 use nu_test_support::prelude::*;
 use rstest::rstest;
 
@@ -212,6 +212,27 @@ fn convert_keys_are_quoted_only_when_required(#[case] input: &str, #[case] quote
         true => assert_eq!(output, format!("{input:?}: null\n"), "expected quotes"),
         false => assert_eq!(output, format!("{input}: null\n"), "expected no quotes"),
     };
+    Ok(())
+}
+
+#[test]
+fn decimal_roundtrips_through_yaml_without_precision_loss() -> Result {
+    let code = "'0.1234567890123456789012345' | into decimal | to yaml | from yaml";
+    let outcome: Value = test().run(code)?;
+    let expected = rust_decimal::Decimal::from_str_exact("0.1234567890123456789012345").unwrap();
+    assert_eq!(outcome, Value::decimal(expected, Span::test_data()));
+    Ok(())
+}
+
+#[rstest]
+#[case::short_tag("'!decimal 5.5'")]
+#[case::fully_qualified("'!<tag:nushell.sh,2026:decimal> 5.5'")]
+fn decimal_parses_from_yaml_tag(#[case] input: &str) -> Result {
+    let outcome: Value = test().run(format!("{input} | from yaml"))?;
+    assert_eq!(
+        outcome,
+        Value::decimal(rust_decimal::Decimal::new(55, 1), Span::test_data())
+    );
     Ok(())
 }
 

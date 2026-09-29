@@ -182,6 +182,14 @@ mod tests {
     }
 
     #[test]
+    fn tagged_string_to_decimal() {
+        let input = Value::test_string("!decimal:3.1415");
+        let expected = Value::decimal(Decimal::new(31415, 4), Span::test_data());
+        let actual = action(&input, &CellPathOnlyArgs::from(vec![]), Span::test_data());
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn communicates_parsing_error_given_an_invalid_decimal_string() {
         let invalid_str = Value::test_string("11.6anra");
 

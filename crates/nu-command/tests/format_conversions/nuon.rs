@@ -1,3 +1,4 @@
+use nu_protocol::Span;
 use nu_test_support::prelude::*;
 
 #[test]
@@ -60,6 +61,15 @@ fn to_nuon_list_of_strings() -> Result {
 
     let outcome: bool = test().run(code)?;
     assert!(outcome);
+    Ok(())
+}
+
+#[test]
+fn decimal_roundtrips_through_nuon_without_precision_loss() -> Result {
+    let code = "'0.1234567890123456789012345' | into decimal | to nuon | from nuon";
+    let outcome: Value = test().run(code)?;
+    let expected = rust_decimal::Decimal::from_str_exact("0.1234567890123456789012345").unwrap();
+    assert_eq!(outcome, Value::decimal(expected, Span::test_data()));
     Ok(())
 }
 

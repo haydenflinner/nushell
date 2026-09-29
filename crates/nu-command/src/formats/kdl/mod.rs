@@ -345,6 +345,24 @@ mod spec_tests {
     }
 
     #[test]
+    fn decimal_roundtrips_through_jik() {
+        let span = Span::test_data();
+        let value = Value::decimal(
+            rust_decimal::Decimal::from_i128_with_scale(1234567890123456789012345678, 27),
+            span,
+        );
+        let doc = value_to_jik_document(&value, &NonRoundtrip::Error, span).unwrap();
+        let text = document_to_string(doc.clone(), KdlSpec::V2);
+        assert!(
+            text.contains("(decimal)"),
+            "expected decimal annotation: {text}"
+        );
+        let parsed_doc = parse_kdl_document(&text, KdlSpec::V2, span).unwrap();
+        let parsed = jik_document_to_value(&parsed_doc, span, false).unwrap();
+        assert_eq!(parsed, value);
+    }
+
+    #[test]
     fn emit_v1_vs_v2_keyword_spelling_for_nodes() {
         let span = Span::test_data();
         let rows = Value::test_list(vec![Value::test_record(record! {

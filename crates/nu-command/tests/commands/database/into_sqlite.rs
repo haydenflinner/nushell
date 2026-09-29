@@ -570,6 +570,38 @@ fn insert_test_rows(
     Ok(())
 }
 
+/// Decimals are stored as tagged TEXT (`!decimal:<repr>`) so they survive the
+/// round trip without going through REAL/f64.
+#[test]
+fn into_sqlite_decimal_stored_as_text_and_roundtrips() -> Result {
+    Playground::setup("decimal sqlite roundtrip", |_, playground| {
+        let db = playground.cwd().join("filename.db");
+        let () = test().cwd(playground.cwd()).run_with_data(
+            "let db = $in; [{v: ('0.1234567890123456789012345' | into decimal)}] | into sqlite $db -t t",
+            db,
+        )?;
+
+        let conn = rusqlite::Connection::open(playground.cwd().join("filename.db")).unwrap();
+        let col_type: String = conn
+            .query_row(
+                "SELECT type FROM pragma_table_info('t') WHERE name = 'v'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(col_type, "TEXT");
+        let raw: String = conn
+            .query_row("SELECT v FROM t", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(raw, "!decimal:0.1234567890123456789012345");
+
+        test()
+            .cwd(playground.cwd())
+            .run("open filename.db | get t.0.v | describe")
+            .expect_value_eq("decimal")
+    })
+}
+
 #[test]
 fn test_auto_conversion() -> Result {
     Playground::setup("sqlite json auto conversion", |_, playground| {

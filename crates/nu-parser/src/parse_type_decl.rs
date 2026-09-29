@@ -55,6 +55,9 @@ fn is_valid_variant_name(name: &[u8]) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
 }
 
+/// The declared name and definition, for module export bookkeeping.
+type ParsedType = Option<(Vec<u8>, Arc<TypeDef>)>;
+
 /// Parse a `type` declaration:
 ///
 /// ```nu
@@ -67,7 +70,7 @@ fn is_valid_variant_name(name: &[u8]) -> bool {
 pub fn parse_type_decl(
     working_set: &mut StateWorkingSet,
     lite_command: &LiteCommand,
-) -> (Pipeline, Option<(Vec<u8>, Arc<TypeDef>)>) {
+) -> (Pipeline, ParsedType) {
     let spans = lite_command.command_parts();
 
     if working_set.get_span_contents(spans[0]) != b"type" {
@@ -188,13 +191,7 @@ fn parse_enum_def(working_set: &mut StateWorkingSet, bytes: &[u8], span: Span) -
     let inner_span = Span::new(span.start + b"enum".len() + 1, span.end - 1);
     let inner_src = working_set.get_span_contents(inner_span);
 
-    let (tokens, err) = lex_signature(
-        inner_src,
-        inner_span.start,
-        &[b'\n', b'\r'],
-        &[b':', b','],
-        true,
-    );
+    let (tokens, err) = lex_signature(inner_src, inner_span.start, b"\n\r", b":,", true);
     if let Some(err) = err {
         working_set.error(err);
         return None;
@@ -304,9 +301,7 @@ pub fn parse_enum_constructor(
         return Some(garbage(working_set, call_span));
     };
 
-    let Some(decl_id) = working_set.find_decl(ENUM_CONSTRUCT_DECL) else {
-        return None;
-    };
+    let decl_id = working_set.find_decl(ENUM_CONSTRUCT_DECL)?;
 
     // Validate the payload argument statically where possible.
     let payload_expr = match &variant.payload {

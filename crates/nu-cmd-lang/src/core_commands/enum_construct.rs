@@ -34,13 +34,13 @@ impl Command for EnumConstruct {
     fn run(
         &self,
         engine_state: &EngineState,
-        _stack: &mut Stack,
+        stack: &mut Stack,
         call: &Call,
         _input: PipelineData,
     ) -> Result<PipelineData, ShellError> {
-        let type_name: String = call.req(engine_state, _stack, 0)?;
-        let variant_name: String = call.req(engine_state, _stack, 1)?;
-        let payload: Option<Value> = call.opt(engine_state, _stack, 2)?;
+        let type_name: String = call.req(engine_state, stack, 0)?;
+        let variant_name: String = call.req(engine_state, stack, 1)?;
+        let payload: Option<Value> = call.opt(engine_state, stack, 2)?;
 
         let Some(type_def) = engine_state.find_type_name(type_name.as_bytes(), &[]) else {
             return Err(GenericError::new(

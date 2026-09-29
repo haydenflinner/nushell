@@ -418,6 +418,38 @@ fn module_import_named_type() -> Result {
     })
 }
 
+// Union type declarations (`struct Name = a | b`)
+
+#[test]
+fn union_alias_accepts_either_branch() -> Result {
+    test()
+        .run("struct Id = int | string; def f [x: Id] { $x | describe }; f \"abc\"")
+        .expect_value_eq("string")
+}
+
+#[test]
+fn union_alias_nested_brackets_dont_split() -> Result {
+    // The `|` inside `record<...>` is nested — the RHS must not split on it.
+    test()
+        .run("struct R { a: list<int> }; def f [x: R] { $x.a | describe }; f {a: [1 2]}")
+        .expect_value_eq("list<int>")
+}
+
+#[test]
+fn union_alias_as_flag_validates() -> Result {
+    test()
+        .run(r#"struct Id = int | string; "5" | from json --as Id | describe"#)
+        .expect_value_eq("int")
+}
+
+#[test]
+fn union_alias_as_flag_rejects() -> Result {
+    test()
+        .run(r#"struct Id = int | string; "1.5" | from json --as Id"#)
+        .expect_shell_error()
+        .map(drop)
+}
+
 // Generic type declarations (`struct Name<T> = ...`)
 
 #[test]

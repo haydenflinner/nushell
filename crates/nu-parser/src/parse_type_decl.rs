@@ -90,6 +90,48 @@ pub fn split_top_level_commas(inner: &[u8]) -> Option<Vec<&[u8]>> {
     Some(parts)
 }
 
+/// Split a `type` declaration's right-hand side at `|` characters that sit
+/// outside any bracket nesting (`<>`, `()`, `[]`, `{}`). Each returned part
+/// carries the file span it occupies inside `rhs_span`, so sub-lexing sees
+/// correct positions. A single un-split side returns it whole.
+fn split_top_level_pipes(rhs: &[u8], rhs_span: Span) -> Vec<(&[u8], Span)> {
+    let mut parts = vec![];
+    let mut depth = 0i32;
+    let mut start = 0;
+
+    for (i, &b) in rhs.iter().enumerate() {
+        match b {
+            b'<' | b'(' | b'[' | b'{' => depth += 1,
+            b'>' | b')' | b']' | b'}' => depth -= 1,
+            b'|' if depth == 0 => {
+                parts.push(trim_with_span(&rhs[start..i], rhs_span.start + start));
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(trim_with_span(&rhs[start..], rhs_span.start + start));
+    parts
+}
+
+/// Trim ASCII whitespace from both ends of `bytes`, adjusting the span
+/// accordingly. `start` is `bytes`' absolute offset in the source file.
+fn trim_with_span(bytes: &[u8], start: usize) -> (&[u8], Span) {
+    let lead = bytes
+        .iter()
+        .position(|&b| !b.is_ascii_whitespace())
+        .unwrap_or(bytes.len());
+    let trail = bytes[lead..]
+        .iter()
+        .rposition(|&b| !b.is_ascii_whitespace())
+        .map(|e| e + 1)
+        .unwrap_or(0);
+    (
+        &bytes[lead..lead + trail],
+        Span::new(start + lead, start + lead + trail),
+    )
+}
+
 /// Split `Name<T, U>` into its base name and the raw names inside `<...>`.
 /// Bare `Name` returns `(Name, [])`. Returns `None` when the text contains
 /// `<`/`>` that do not form a well-formed trailing parameter list.
@@ -337,7 +379,23 @@ pub fn parse_type_decl(
             }
         }
     } else {
-        TypeDefKind::Alias(parse_shape_name(working_set, &rhs, rhs_span))
+        // `struct Id = int | string` — a structural union, parsed as
+        // `oneof(...)`. Pipes only split at the top level; `|` inside
+        // `record<...>`/`list<...>`/closure shapes stays nested.
+        let branches = split_top_level_pipes(&rhs, rhs_span);
+        let shape = if branches.len() > 1 {
+            SyntaxShape::OneOf(
+                branches
+                    .iter()
+                    .map(|(branch, branch_span)| {
+                        parse_shape_name(working_set, branch, *branch_span)
+                    })
+                    .collect(),
+            )
+        } else {
+            parse_shape_name(working_set, &rhs, rhs_span)
+        };
+        TypeDefKind::Alias(shape)
     };
 
     working_set.type_params = saved_params;

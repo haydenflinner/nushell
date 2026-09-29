@@ -611,6 +611,8 @@ pub fn parse_match_block_expression(
         working_set.error(err);
     }
 
+    let scrutinee_ty = working_set.match_scrutinee.last().cloned();
+
     let mut position = 0;
 
     let mut output_matches = vec![];
@@ -635,14 +637,16 @@ pub fn parse_match_block_expression(
             break;
         }
 
-        let mut connector = working_set.get_span_contents(output[position].span);
+        let mut connector = working_set
+            .get_span_contents(output[position].span)
+            .to_vec();
 
         // Multiple patterns connected by '|'
-        if connector == b"|" && position < output.len() {
+        if connector.as_slice() == b"|" && position < output.len() {
             let mut or_pattern = vec![pattern];
 
-            while connector == b"|" && position < output.len() {
-                connector = b"";
+            while connector.as_slice() == b"|" && position < output.len() {
+                connector.clear();
 
                 position += 1;
 
@@ -666,7 +670,9 @@ pub fn parse_match_block_expression(
                     ));
                     break;
                 } else {
-                    connector = working_set.get_span_contents(output[position].span);
+                    connector = working_set
+                        .get_span_contents(output[position].span)
+                        .to_vec();
                 }
             }
 
@@ -687,8 +693,15 @@ pub fn parse_match_block_expression(
                 span: Span::new(start, end),
             }
         }
+
+        // Payload bindings get their declared types when the scrutinee is a
+        // declared enum — the guard and the arm body see the typed vars.
+        if let Some(scrutinee_ty) = scrutinee_ty.as_ref() {
+            crate::parse_type_decl::bind_enum_payload_vars(working_set, scrutinee_ty, &pattern);
+        }
+
         // A match guard
-        if connector == b"if" {
+        if connector.as_slice() == b"if" {
             let if_end = {
                 let end = output[position].span.end;
                 Span::new(end, end)
@@ -733,10 +746,12 @@ pub fn parse_match_block_expression(
 
             pattern.guard = Some(Box::new(guard));
             position += if found { start + 1 } else { start };
-            connector = working_set.get_span_contents(output[position].span);
+            connector = working_set
+                .get_span_contents(output[position].span)
+                .to_vec();
         }
         // Then the `=>` arrow
-        if connector != b"=>" {
+        if connector.as_slice() != b"=>" {
             working_set.error(ParseError::Mismatch(
                 "=>".into(),
                 "end of input".into(),

@@ -418,6 +418,68 @@ fn module_import_named_type() -> Result {
     })
 }
 
+// Payload-bound variable typing: binders in enum arm patterns get the
+// variant's declared payload type, so arm bodies type-check against it.
+
+#[test]
+fn payload_binder_typed_from_variant() -> Result {
+    // `$v` is `int` in the arm — a wrong-typed use is a parse error.
+    test()
+        .run(
+            r#"enum S { a: int, b: string }; def takes-int [n: int] { $n }; def f [x: S] { match $x { S.a $v => (takes-int $v), S.b _ => 0 } }; f (S.a 5)"#,
+        )
+        .expect_value_eq(5)
+}
+
+#[test]
+fn payload_binder_type_error_in_arm() -> Result {
+    test()
+        .run(
+            r#"enum S { a: string, b }; def takes-int [n: int] { $n }; def f [x: S] { match $x { S.a $v => (takes-int $v), S.b => 0 } }"#,
+        )
+        .expect_parse_error()
+        .map(drop)
+}
+
+#[test]
+fn payload_binder_typed_from_generic_instantiation() -> Result {
+    // `Option<int>` scrutinee binds `$v` at `int`, not `T`.
+    test()
+        .run(
+            r#"enum Option<T> { some: T, none }; def takes-int [n: int] { $n }; def f [x: Option<int>] { match $x { Option.some $v => (takes-int $v), Option.none => 0 } }; f (Option.some 7)"#,
+        )
+        .expect_value_eq(7)
+}
+
+#[test]
+fn payload_binder_generic_mismatch_is_error() -> Result {
+    test()
+        .run(
+            r#"enum Option<T> { some: T, none }; def takes-int [n: int] { $n }; def f [x: Option<string>] { match $x { Option.some $v => (takes-int $v), Option.none => 0 } }"#,
+        )
+        .expect_parse_error()
+        .map(drop)
+}
+
+#[test]
+fn payload_binder_record_fields_typed() -> Result {
+    test()
+        .run(
+            r#"enum R { err: record<msg: string, code: int>, ok }; def f [x: R] { match $x { R.err {msg: $m, code: $c} => $"($c) ($m | describe)", R.ok => "ok" } }; f (R.err {msg: "x", code: 4})"#,
+        )
+        .expect_value_eq("4 string")
+}
+
+#[test]
+fn payload_binder_plain_record_pattern() -> Result {
+    // The unqualified `{kind, payload}` spelling gets the same treatment.
+    test()
+        .run(
+            r#"enum S { a: int, b }; def takes-int [n: int] { $n }; def f [x: S] { match $x { {kind: "a", payload: $v} => (takes-int $v), _ => 0 } }; f (S.a 3)"#,
+        )
+        .expect_value_eq(3)
+}
+
 // Union type declarations (`struct Name = a | b`)
 
 #[test]

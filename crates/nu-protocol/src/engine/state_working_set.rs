@@ -39,6 +39,11 @@ pub struct StateWorkingSet<'a> {
     /// names in this list to [`SyntaxShape::TypeVar`] before anything else.
     /// Empty outside `type` declarations.
     pub type_params: Vec<String>,
+    /// Scrutinee types of enclosing `match` expressions while their match
+    /// blocks parse — a stack so nested `match`es see their own scrutinee.
+    /// Used to bind payload variables (`Option.some $v => ...`) at their
+    /// declared payload type.
+    pub match_scrutinee: Vec<crate::Type>,
     pub parse_errors: Vec<ParseError>,
     pub parse_warnings: Vec<ParseWarning>,
     pub compile_errors: Vec<CompileError>,
@@ -79,6 +84,7 @@ impl<'a> StateWorkingSet<'a> {
             search_predecls: true,
             skip_module_load: false,
             type_params: vec![],
+            match_scrutinee: vec![],
             parse_errors: vec![],
             parse_warnings: vec![],
             compile_errors: vec![],

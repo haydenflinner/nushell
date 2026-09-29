@@ -1416,6 +1416,19 @@ pub fn parse_internal_call(
                         _ => None,
                     };
 
+                    // While a `match` block parses, expose the scrutinee's
+                    // type so arm patterns can bind payload variables at
+                    // their declared types.
+                    let scrutinee_pushed = matches!(special_cmd, Some(SpecialCmd::Match))
+                        && &positional.name == "match_block";
+                    if scrutinee_pushed {
+                        let scrutinee_ty = match call.arguments.last() {
+                            Some(Argument::Positional(scrutinee)) => scrutinee.ty.clone(),
+                            _ => Type::Any,
+                        };
+                        working_set.match_scrutinee.push(scrutinee_ty);
+                    }
+
                     // HACK: `def` block parameter is of type `closure`, which is wrong.
                     // However, that's used to make sure `def` blocks don't capture mutable
                     // variables. (Which is also a HACK)
@@ -1460,6 +1473,10 @@ pub fn parse_internal_call(
                             input_type.as_ref(),
                         ),
                     };
+
+                    if scrutinee_pushed {
+                        working_set.match_scrutinee.pop();
+                    }
 
                     match special_cmd {
                         Some(SpecialCmd::Match) if &positional.name == "match_block" => {

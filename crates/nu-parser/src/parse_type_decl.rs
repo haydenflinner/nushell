@@ -1076,6 +1076,147 @@ pub fn enum_match_uncovered<'a>(
     Some(uncovered.iter().map(|v| v.to_string()).collect())
 }
 
+/// Bind variables in a `match` arm pattern at their declared payload types.
+///
+/// When the scrutinee is a declared enum type, an arm pattern that fixes
+/// `kind` to a known variant — whether written qualified (`Option.some $v`,
+/// lowered to `{kind: "some", payload: $v}`) or as a plain record pattern —
+/// types the payload bindings from the variant's declared payload shape:
+/// `Option.some $v` binds `$v` at `T`, `Result.err {msg: $m}` binds `$m` at
+/// `string`. Generic parameters come from the scrutinee's instantiation
+/// (`Option<int>` binds `$v` at `int`); an unspecialized scrutinee leaves
+/// them `any`.
+pub fn bind_enum_payload_vars(
+    working_set: &mut StateWorkingSet,
+    scrutinee_ty: &Type,
+    pattern: &MatchPattern,
+) {
+    let Type::Custom(type_name) = scrutinee_ty else {
+        return;
+    };
+    let Some(type_def) = working_set.find_type_name(type_base_name(type_name.as_bytes())) else {
+        return;
+    };
+    let TypeDefKind::Enum(enum_def) = &type_def.kind else {
+        return;
+    };
+
+    // Type-parameter bindings from the scrutinee's instantiation:
+    // `Option<int>` binds `T` to `int`. An unparameterized type or a bare
+    // generic name binds nothing — `TypeVar`s degrade to `any`.
+    let name_bytes = type_name.as_bytes();
+    let arg_bytes: Vec<&[u8]> = name_bytes
+        .iter()
+        .position(|&b| b == b'<')
+        .and_then(|lt| {
+            name_bytes[lt + 1..]
+                .strip_suffix(b">")
+                .and_then(split_top_level_commas)
+        })
+        .unwrap_or_default();
+    let arg_shapes: Vec<SyntaxShape> = arg_bytes
+        .iter()
+        .map(|arg| parse_shape_name(working_set, arg.trim_ascii(), pattern.span))
+        .collect();
+    let any = SyntaxShape::Any;
+    let bindings: std::collections::HashMap<&str, &SyntaxShape> = type_def
+        .params
+        .iter()
+        .map(String::as_str)
+        .zip(arg_shapes.iter())
+        .chain(
+            type_def
+                .params
+                .iter()
+                .skip(arg_shapes.len())
+                .map(String::as_str)
+                .map(|p| (p, &any)),
+        )
+        .collect();
+
+    bind_enum_pattern(working_set, enum_def, &bindings, pattern);
+}
+
+fn bind_enum_pattern(
+    working_set: &mut StateWorkingSet,
+    enum_def: &EnumDef,
+    bindings: &std::collections::HashMap<&str, &SyntaxShape>,
+    pattern: &MatchPattern,
+) {
+    match &pattern.pattern {
+        Pattern::Or(patterns) => {
+            for pattern in patterns {
+                bind_enum_pattern(working_set, enum_def, bindings, pattern);
+            }
+        }
+        Pattern::Record(fields) => {
+            // The variant is fixed by a `{kind: "..."}` literal.
+            let Some(variant_name) = fields.iter().find_map(|(name, pat)| {
+                if name == "kind"
+                    && let Pattern::Value(Value::String { val, .. }) = &pat.pattern
+                {
+                    Some(val.as_str())
+                } else {
+                    None
+                }
+            }) else {
+                return;
+            };
+            let Some(variant) = enum_def.get_variant(variant_name) else {
+                return;
+            };
+            let Some(payload_shape) = &variant.payload else {
+                return;
+            };
+            let payload_ty = substitute_type_vars(payload_shape, bindings).to_type();
+            if let Some((_, payload_pattern)) = fields.iter().find(|(name, _)| name == "payload") {
+                bind_payload_pattern(working_set, &payload_ty, payload_pattern);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Assign `ty` (and its field/element types) to the variables a payload
+/// pattern binds.
+fn bind_payload_pattern(working_set: &mut StateWorkingSet, ty: &Type, pattern: &MatchPattern) {
+    match &pattern.pattern {
+        Pattern::Variable(var_id) => {
+            working_set.set_variable_type(*var_id, ty.clone());
+        }
+        Pattern::Record(fields) => {
+            if let Type::Record(cols) = ty {
+                for (name, field_pattern) in fields {
+                    if let Some(field_ty) = cols.get(name) {
+                        bind_payload_pattern(working_set, field_ty, field_pattern);
+                    }
+                }
+            }
+        }
+        Pattern::List(elements) => {
+            if let Type::List(elem) = ty {
+                for element_pattern in elements {
+                    let element_ty = match &element_pattern.pattern {
+                        // `..$rest` collects the remaining elements.
+                        Pattern::Rest(_) => ty.clone(),
+                        _ => (**elem).clone(),
+                    };
+                    bind_payload_pattern(working_set, &element_ty, element_pattern);
+                }
+            }
+        }
+        Pattern::Rest(var_id) => {
+            working_set.set_variable_type(*var_id, ty.clone());
+        }
+        Pattern::Or(patterns) => {
+            for pattern in patterns {
+                bind_payload_pattern(working_set, ty, pattern);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Emit a parse error when a `match` on a declared enum type is not
 /// exhaustive.
 ///

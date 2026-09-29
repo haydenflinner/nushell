@@ -1,6 +1,6 @@
 use core::fmt::Write;
 use nu_engine::get_columns;
-use nu_protocol::{Range, ShellError, Span, Value, engine::EngineState};
+use nu_protocol::{Range, ShellError, Span, Value, encode_decimal_string, engine::EngineState};
 use nu_utils::{ObviousFloat, as_raw_string, escape_quote_string, needs_quoting};
 
 /// Configuration for converting Nushell [`Value`] to NUON data.
@@ -249,7 +249,7 @@ fn value_to_string(
         // FIXME: make filesizes use the shortest lossless representation.
         Value::Filesize { val, .. } => Ok(format!("{}b", val.get())),
         Value::Float { val, .. } => Ok(ObviousFloat(*val).to_string()),
-        Value::Decimal { val, .. } => Ok(val.to_string()),
+        Value::Decimal { val, .. } => Ok(escape_quote_string(&encode_decimal_string(*val))),
         Value::Int { val, .. } => Ok(val.to_string()),
         Value::List { vals, .. } => {
             let headers = get_columns(vals);

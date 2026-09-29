@@ -6,11 +6,10 @@ use std::io;
 use byteorder::{BigEndian, WriteBytesExt};
 use nu_engine::command_prelude::*;
 use nu_protocol::{
-    Signals, Spanned, ast::PathMember, decimal_to_float_error,
-    shell_error::generic::GenericError, shell_error::io::IoError,
+    Signals, Spanned, ast::PathMember, encode_decimal_string, shell_error::generic::GenericError,
+    shell_error::io::IoError,
 };
 use rmp::encode as mp;
-use num_traits::ToPrimitive;
 
 /// Max recursion depth
 const MAX_DEPTH: usize = 50;
@@ -185,7 +184,7 @@ pub(crate) fn write_value(
             mp::write_f64(out, *val).err_span(span)?;
         }
         Value::Decimal { val, .. } => {
-            mp::write_f64(out, val.to_f64().ok_or_else(|| decimal_to_float_error(value.span()))?).err_span(span)?;
+            mp::write_str(out, &encode_decimal_string(*val)).err_span(span)?;
         }
         Value::Filesize { val, .. } => {
             mp::write_sint(out, val.get()).err_span(span)?;

@@ -528,6 +528,7 @@ pub fn value_to_sql(
         Value::Bool { val, .. } => Ok(Box::new(val)),
         Value::Int { val, .. } => Ok(Box::new(val)),
         Value::Float { val, .. } => Ok(Box::new(val)),
+        Value::Decimal { val, .. } => Ok(Box::new(nu_protocol::encode_decimal_string(val))),
         Value::Filesize { val, .. } => Ok(Box::new(val.get())),
         Value::Duration { val, .. } => Ok(Box::new(val)),
         Value::Date { val, .. } => Ok(Box::new(val)),
@@ -851,7 +852,10 @@ pub fn convert_sqlite_value_to_nu_value(
                     Err(err) => Value::error(err, span),
                 }
             }
-            (Ok(txt), _) => Value::string(txt.to_string(), span),
+            (Ok(txt), _) => match nu_protocol::decode_decimal_string(txt) {
+                Some(decimal) => Value::decimal(decimal, span),
+                None => Value::string(txt.to_string(), span),
+            },
             (Err(_), _) => Value::error(ShellError::NonUtf8 { span }, span),
         },
         ValueRef::Blob(u) => Value::binary(u.to_vec(), span),

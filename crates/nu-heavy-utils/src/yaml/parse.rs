@@ -488,6 +488,14 @@ fn parse_scalar_tagged<'i>(
                 })?,
             ctx.parser_span,
         ),
+        (KnownTag::Decimal, _) => Value::decimal(
+            rust_decimal::Decimal::from_str(value).map_err(|err| ParseError::Decimal {
+                attempted: value.to_owned(),
+                err,
+                span: ctx.yaml_span,
+            })?,
+            ctx.parser_span,
+        ),
 
         // unimplemented tag
         (KnownTag::Closure | KnownTag::Error, _) => {
@@ -645,7 +653,8 @@ fn parse_sequence<'i>(
         | KnownTag::Closure
         | KnownTag::Error
         | KnownTag::Timestamp
-        | KnownTag::CellPath => Err(ShellError::from(ParseError::IncorrectTag {
+        | KnownTag::CellPath
+        | KnownTag::Decimal => Err(ShellError::from(ParseError::IncorrectTag {
             tag,
             at: NodeKind::Sequence,
             span: ctx.yaml_span,
@@ -813,7 +822,8 @@ fn parse_mapping<'i>(
         | KnownTag::Closure
         | KnownTag::Error
         | KnownTag::Timestamp
-        | KnownTag::CellPath => Err(ShellError::from(ParseError::IncorrectTag {
+        | KnownTag::CellPath
+        | KnownTag::Decimal => Err(ShellError::from(ParseError::IncorrectTag {
             tag,
             at: NodeKind::Mapping,
             span: ctx.yaml_span,

@@ -61,6 +61,11 @@ pub enum ParseError<'i> {
         err: chrono::ParseError,
         span: Span,
     },
+    Decimal {
+        attempted: String,
+        err: rust_decimal::Error,
+        span: Span,
+    },
     Range {
         attempted: String,
         err: ParseRangeError,
@@ -302,6 +307,18 @@ impl From<ParseError<'_>> for ShellError {
                 span,
             )
             .with_code("shell::yaml::parse::date")
+            .with_source(err),
+
+            ParseError::Decimal {
+                attempted,
+                err,
+                span,
+            } => GenericError::new(
+                "Parsing Decimal failed",
+                format!("Parsing {attempted:?} failed"),
+                span,
+            )
+            .with_code("shell::yaml::parse::decimal")
             .with_source(err),
 
             ParseError::Range {

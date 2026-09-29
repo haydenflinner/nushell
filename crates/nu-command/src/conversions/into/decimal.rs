@@ -95,6 +95,10 @@ fn action(input: &Value, _args: &CellPathOnlyArgs, head: Span) -> Value {
     match input {
         Value::Decimal { .. } => input.clone(),
         Value::String { val: s, .. } => {
+            if let Some(decimal) = nu_protocol::decode_decimal_string(s) {
+                return Value::decimal(decimal, head);
+            }
+
             let other = s.trim();
 
             match other.parse::<Decimal>() {
@@ -125,7 +129,10 @@ fn action(input: &Value, _args: &CellPathOnlyArgs, head: Span) -> Value {
                                 to_type: "decimal".to_string(),
                                 from_type: format!("float ({})", f),
                                 span,
-                                help: Some(format!("Float value ({}) cannot be precisely represented as decimal: {}", f, reason)),
+                                help: Some(format!(
+                                    "Float value ({}) cannot be precisely represented as decimal: {}",
+                                    f, reason
+                                )),
                             },
                             span,
                         ),

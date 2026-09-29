@@ -274,9 +274,7 @@ impl CompareTypes for Type {
             (Type::String | Type::Int, Type::CellPath) => Some(TypeRelation::Subtype),
             (Type::CellPath, Type::String | Type::Int) => Some(TypeRelation::Supertype),
 
-            (Type::Float | Type::Int | Type::Decimal, Type::Number) => {
-                Some(TypeRelation::Subtype)
-            }
+            (Type::Float | Type::Int | Type::Decimal, Type::Number) => Some(TypeRelation::Subtype),
             (Type::Number, Type::Float | Type::Int | Type::Decimal) => {
                 Some(TypeRelation::Supertype)
             }

@@ -10,7 +10,7 @@ use std::{
 use byteorder::{BigEndian, ReadBytesExt};
 use chrono::{TimeZone, Utc};
 use nu_engine::command_prelude::*;
-use nu_protocol::{Signals, shell_error::generic::GenericError};
+use nu_protocol::{Signals, decode_decimal_string, shell_error::generic::GenericError};
 use rmp::decode::{self as mp, ValueReadError};
 
 /// Max recursion depth
@@ -246,7 +246,7 @@ pub(crate) fn read_msgpack(
             if !done {
                 let result = read_value(&mut input, span, 0);
                 match result {
-                    Ok(value) => Some(value),
+                    Ok(value) => Some(decode_decimal(value)),
                     // Any error should cause us to not read anymore
                     Err(ReadError::Io(err, _)) if err.kind() == ErrorKind::UnexpectedEof => {
                         done = true;
@@ -266,7 +266,7 @@ pub(crate) fn read_msgpack(
         // Read a single value and then make sure it's EOF
         let result = read_value(&mut input, span, 0)?;
         assert_eof(&mut input, span)?;
-        Ok(result.into_pipeline_data())
+        Ok(decode_decimal(result).into_pipeline_data())
     }
 }
 
@@ -390,6 +390,19 @@ fn read_str(input: &mut impl io::Read, len: usize, span: Span) -> Result<Value, 
     Ok(Value::string(String::from_utf8(buf).err_span(span)?, span))
 }
 
+/// Decodes a string that was produced by [`nu_protocol::encode_decimal_string`]
+/// back into a decimal. All other values are returned unchanged.
+fn decode_decimal(value: Value) -> Value {
+    let span = value.span();
+    match value {
+        Value::String { val, .. } => match decode_decimal_string(&val) {
+            Some(decimal) => Value::decimal(decimal, span),
+            None => Value::string(val, span),
+        },
+        value => value,
+    }
+}
+
 fn read_bin(input: &mut impl io::Read, len: usize, span: Span) -> Result<Value, ReadError> {
     let mut buf = vec![0; len];
     input.read_exact(&mut buf).err_span(span)?;
@@ -403,7 +416,7 @@ fn read_array(
     depth: usize,
 ) -> Result<Value, ReadError> {
     let vec = (0..len)
-        .map(|_| read_value(input, span, depth + 1))
+        .map(|_| read_value(input, span, depth + 1).map(decode_decimal))
         .collect::<Result<Vec<Value>, ReadError>>()?;
     Ok(Value::list(vec, span))
 }
@@ -425,7 +438,7 @@ fn read_map(
                         span,
                     ))
                 })?;
-            let val = read_value(input, span, depth + 1)?;
+            let val = decode_decimal(read_value(input, span, depth + 1)?);
             Ok((key, val))
         })
         .collect::<Result<Record, ReadError>>()?;

@@ -1,6 +1,7 @@
 use nu_protocol::{
     DEFAULT_ERROR_CONTEXT, Filesize, IntoValue, Range, Record, ShellError, Span, Type, Unit, Value,
     ast::{Expr, Expression, ListItem, RecordItem},
+    decode_decimal_string,
     engine::{EngineState, StateWorkingSet},
     shell_error::generic::GenericError,
     truncated_source_window,
@@ -333,7 +334,11 @@ fn convert_to_value(
             expr.span,
             "signatures not supported in nuon",
         )),
-        Expr::String(s) | Expr::RawString(s) => Ok(Value::string(s.clone(), span)),
+        Expr::String(s) => Ok(match decode_decimal_string(&s) {
+            Some(decimal) => Value::decimal(decimal, span),
+            None => Value::string(s.clone(), span),
+        }),
+        Expr::RawString(s) => Ok(Value::string(s.clone(), span)),
         Expr::StringInterpolation(..) => Err(truncated_nuon_error(
             original_text,
             expr.span,

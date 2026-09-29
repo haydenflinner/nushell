@@ -224,6 +224,12 @@ enum KnownTag {
     /// Reference: [`nu_protocol::Value::CellPath`]
     #[strum(to_string = "!cell-path", serialize = "tag:nushell.sh,2026:cell-path")]
     CellPath,
+
+    /// Nushell decimal value.
+    ///
+    /// Reference: [`nu_protocol::Value::Decimal`]
+    #[strum(to_string = "!decimal", serialize = "tag:nushell.sh,2026:decimal")]
+    Decimal,
 }
 
 impl KnownTag {
@@ -256,6 +262,10 @@ mod tests {
     #[case::bool(true)]
     #[case::int(42)]
     #[case::float(1.5)]
+    #[case::decimal(Value::decimal(
+        rust_decimal::Decimal::from_i128_with_scale(1234567890123456789012345678, 27),
+        SPAN
+    ))]
     #[case::string("abc")]
     #[case::glob(Value::test_glob("*.nu"))]
     #[case::filesize(Value::test_filesize(1024))]

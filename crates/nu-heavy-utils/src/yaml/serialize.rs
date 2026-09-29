@@ -31,12 +31,11 @@ use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use chrono::{DateTime, FixedOffset};
 use derive_setters::Setters;
 use nu_protocol::{
-    FromValue, Range, ShellError, Span, Value, decimal_to_float_error,
+    FromValue, Range, ShellError, Span, Value,
     ast::CellPath,
     engine::{Closure, EngineState},
 };
 use nu_utils::FmtHandle;
-use num_traits::ToPrimitive;
 use scopeguard::defer;
 use serde::{
     Serialize,
@@ -311,6 +310,7 @@ enum YamlValue<'v> {
     Error(&'v ShellError),
     Binary(&'v [u8]),
     CellPath(&'v CellPath),
+    Decimal(String),
 }
 
 impl Serialize for YamlValue<'_> {
@@ -415,6 +415,7 @@ impl Serialize for YamlValue<'_> {
             YamlValue::Error(shell_error) => serialize_error(shell_error, serializer),
             YamlValue::Binary(bytes) => serialize_binary(bytes, serializer),
             YamlValue::CellPath(cell_path) => serialize_with_tag(serializer, tag, cell_path),
+            YamlValue::Decimal(decimal) => serialize_with_tag(serializer, tag, decimal),
         }
     }
 }
@@ -469,6 +470,7 @@ impl<'v> YamlValue<'v> {
             YamlValue::Error(_) => KnownTag::Error,
             YamlValue::Binary(_) => KnownTag::Binary,
             YamlValue::CellPath(_) => KnownTag::CellPath,
+            YamlValue::Decimal(_) => KnownTag::Decimal,
         }
     }
 
@@ -477,10 +479,7 @@ impl<'v> YamlValue<'v> {
             Value::Bool { val, .. } => YamlValue::Bool(*val),
             Value::Int { val, .. } => YamlValue::Int(*val),
             Value::Float { val, .. } => YamlValue::Float(*val),
-            Value::Decimal { val, .. } => YamlValue::Float(
-                val.to_f64()
-                    .ok_or_else(|| decimal_to_float_error(span))?,
-            ),
+            Value::Decimal { val, .. } => YamlValue::Decimal(val.to_string()),
             Value::String { val, .. } => YamlValue::Str(val.as_str()),
             Value::Glob { val, .. } => YamlValue::Glob(val.as_str()),
             Value::Filesize { val, .. } => YamlValue::Filesize(val.get()),

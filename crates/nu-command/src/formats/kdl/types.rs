@@ -1,13 +1,13 @@
 //! Nushell type annotations for KDL (YAML-tag analogue).
 //!
-//! Known annotations: filesize, duration, timestamp (alias: datetime), binary, glob, range, cell-path.
+//! Known annotations: filesize, duration, timestamp (alias: datetime), binary, glob, range, cell-path, decimal.
 //! JiK also uses structural annotations: array, object.
 
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use chrono::{DateTime, FixedOffset};
 use kdl::{KdlEntry, KdlValue};
 use nu_engine::command_prelude::*;
-use nu_protocol::{Range, ast::CellPath, decimal_to_float_error, engine::EngineState};
+use nu_protocol::{Range, ast::CellPath, engine::EngineState};
 use num_traits::ToPrimitive;
 use std::str::FromStr;
 
@@ -22,6 +22,7 @@ pub(crate) const TY_BINARY: &str = "binary";
 pub(crate) const TY_GLOB: &str = "glob";
 pub(crate) const TY_RANGE: &str = "range";
 pub(crate) const TY_CELL_PATH: &str = "cell-path";
+pub(crate) const TY_DECIMAL: &str = "decimal";
 
 #[derive(Debug, Clone)]
 pub(crate) enum NonRoundtrip {
@@ -179,6 +180,19 @@ fn promote_known_type(ty: &str, base: &Value, span: Span) -> Result<Option<Value
                 })?;
             Value::cell_path(path, span)
         }
+        TY_DECIMAL => {
+            let s = base
+                .as_str()
+                .map_err(|_| type_payload_error(ty, base, span))?;
+            let decimal =
+                rust_decimal::Decimal::from_str(s).map_err(|err| ShellError::CantConvert {
+                    to_type: "decimal".into(),
+                    from_type: "string".into(),
+                    span: base.span(),
+                    help: Some(err.to_string()),
+                })?;
+            Value::decimal(decimal, span)
+        }
         _ => return Ok(None),
     }))
 }
@@ -284,13 +298,9 @@ pub(crate) fn nu_literal_to_kdl(
         Value::Bool { val, .. } => Ok((KdlValue::Bool(*val), None)),
         Value::Int { val, .. } => Ok((KdlValue::Integer(*val as i128), None)),
         Value::Float { val, .. } => Ok((KdlValue::Float(*val), None)),
-        Value::Decimal { val, .. } => Ok((
-            KdlValue::Float(
-                val.to_f64()
-                    .ok_or_else(|| decimal_to_float_error(value.span()))?,
-            ),
-            None,
-        )),
+        Value::Decimal { val, .. } => {
+            Ok((KdlValue::String(val.to_string()), Some(TY_DECIMAL)))
+        }
         Value::String { val, .. } => Ok((KdlValue::String(val.clone()), None)),
         Value::Nothing { .. } => Ok((KdlValue::Null, None)),
         Value::Filesize { val, .. } => Ok((KdlValue::Integer(val.get() as i128), Some(TY_FILESIZE))),

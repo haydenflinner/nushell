@@ -555,7 +555,8 @@ impl Value {
             Value::Int { val, .. } => Ok(*val as f64),
             Value::Decimal { val, .. } => {
                 use rust_decimal::prelude::ToPrimitive;
-                val.to_f64().ok_or_else(|| crate::decimal_to_float_error(self.span()))
+                val.to_f64()
+                    .ok_or_else(|| crate::decimal_to_float_error(self.span()))
             }
             val => val.cant_convert_to("float"),
         }
@@ -2938,42 +2939,46 @@ impl Value {
             }
             (Value::Int { val: lhs, .. }, Value::Decimal { val: rhs, .. }) => {
                 use rust_decimal::prelude::FromPrimitive;
-                let lhs_decimal = rust_decimal::Decimal::from_i64(*lhs)
-                    .ok_or_else(|| ShellError::OperatorOverflow {
+                let lhs_decimal = rust_decimal::Decimal::from_i64(*lhs).ok_or_else(|| {
+                    ShellError::OperatorOverflow {
                         msg: "int to decimal conversion overflowed".into(),
                         span,
                         help: None,
-                    })?;
+                    }
+                })?;
                 Ok(Value::decimal(lhs_decimal + *rhs, span))
             }
             (Value::Decimal { val: lhs, .. }, Value::Int { val: rhs, .. }) => {
                 use rust_decimal::prelude::FromPrimitive;
-                let rhs_decimal = rust_decimal::Decimal::from_i64(*rhs)
-                    .ok_or_else(|| ShellError::OperatorOverflow {
+                let rhs_decimal = rust_decimal::Decimal::from_i64(*rhs).ok_or_else(|| {
+                    ShellError::OperatorOverflow {
                         msg: "int to decimal conversion overflowed".into(),
                         span,
                         help: None,
-                    })?;
+                    }
+                })?;
                 Ok(Value::decimal(*lhs + rhs_decimal, span))
             }
             (Value::Float { val: lhs, .. }, Value::Decimal { val: rhs, .. }) => {
                 use rust_decimal::prelude::FromPrimitive;
-                let lhs_decimal = rust_decimal::Decimal::from_f64(*lhs)
-                    .ok_or_else(|| ShellError::OperatorOverflow {
+                let lhs_decimal = rust_decimal::Decimal::from_f64(*lhs).ok_or_else(|| {
+                    ShellError::OperatorOverflow {
                         msg: "float to decimal conversion failed".into(),
                         span,
                         help: None,
-                    })?;
+                    }
+                })?;
                 Ok(Value::decimal(lhs_decimal + *rhs, span))
             }
             (Value::Decimal { val: lhs, .. }, Value::Float { val: rhs, .. }) => {
                 use rust_decimal::prelude::FromPrimitive;
-                let rhs_decimal = rust_decimal::Decimal::from_f64(*rhs)
-                    .ok_or_else(|| ShellError::OperatorOverflow {
+                let rhs_decimal = rust_decimal::Decimal::from_f64(*rhs).ok_or_else(|| {
+                    ShellError::OperatorOverflow {
                         msg: "float to decimal conversion failed".into(),
                         span,
                         help: None,
-                    })?;
+                    }
+                })?;
                 Ok(Value::decimal(*lhs + rhs_decimal, span))
             }
             (Value::String { val: lhs, .. }, Value::String { val: rhs, .. }) => {

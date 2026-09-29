@@ -1,8 +1,8 @@
 use nu_protocol::{
-    CustomValue, FromValue, IntoValue, Record, ShellError, Span, Type, decimal_to_float_error,
+    CustomValue, FromValue, IntoValue, Record, ShellError, Span, Type, decode_decimal_string,
+    encode_decimal_string,
     engine::{Closure, EngineState},
 };
-use num_traits::ToPrimitive;
 
 use crate::Value as JsonValue;
 use nu_protocol::Value as NuValue;
@@ -10,7 +10,10 @@ use nu_protocol::Value as NuValue;
 impl IntoValue for JsonValue {
     fn into_value(self, span: Span) -> NuValue {
         match self {
-            JsonValue::String(s) => NuValue::string(s, span),
+            JsonValue::String(s) => match decode_decimal_string(&s) {
+                Some(decimal) => NuValue::decimal(decimal, span),
+                None => NuValue::string(s, span),
+            },
             JsonValue::Bool(b) => NuValue::bool(b, span),
             JsonValue::F64(f) => NuValue::float(f, span),
             JsonValue::I64(i) => NuValue::int(i, span),
@@ -59,10 +62,7 @@ impl JsonValue {
             NuValue::Bool { val, .. } => JsonValue::Bool(val),
             NuValue::Int { val, .. } => JsonValue::I64(val),
             NuValue::Float { val, .. } => JsonValue::F64(val),
-            NuValue::Decimal { val, .. } => JsonValue::F64(
-                val.to_f64()
-                    .ok_or_else(|| decimal_to_float_error(span))?,
-            ),
+            NuValue::Decimal { val, .. } => JsonValue::String(encode_decimal_string(val)),
             NuValue::String { val, .. } => JsonValue::String(val),
             NuValue::Glob { val, .. } => JsonValue::String(val.to_string()),
             NuValue::Filesize { val, .. } => JsonValue::I64(val.get()),

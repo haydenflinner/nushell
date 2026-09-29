@@ -80,12 +80,39 @@ extern crate nu_test_support;
 #[cfg(test)]
 use nu_test_support::harness::main;
 
+/// The tag prefix used to encode a [`Value::Decimal`] as a string in data
+/// formats that have no native decimal type (JSON, MessagePack, TOML, NUON,
+/// SQLite).
+///
+/// A decimal is encoded as `"!decimal:<decimal>"`, e.g. `!decimal:1.5`.
+/// See [`encode_decimal_string`] and [`decode_decimal_string`].
+pub const DECIMAL_STRING_TAG: &str = "!decimal:";
+
+/// Encodes a [`rust_decimal::Decimal`] as a tagged string (e.g. `"!decimal:1.5"`)
+/// for data formats that cannot represent decimals natively.
+///
+/// The result can be converted back with [`decode_decimal_string`].
+pub fn encode_decimal_string(val: rust_decimal::Decimal) -> String {
+    format!("{DECIMAL_STRING_TAG}{val}")
+}
+
+/// Decodes a tagged decimal string produced by [`encode_decimal_string`].
+///
+/// Returns `None` if `s` does not start with [`DECIMAL_STRING_TAG`] or the
+/// payload is not a valid decimal, in which case `s` should be treated as an
+/// ordinary string.
+pub fn decode_decimal_string(s: &str) -> Option<rust_decimal::Decimal> {
+    s.strip_prefix(DECIMAL_STRING_TAG)?.parse().ok()
+}
+
 /// Creates a ShellError for decimal to float conversion failures
 pub fn decimal_to_float_error(span: Span) -> ShellError {
     ShellError::CantConvert {
         to_type: "float".into(),
         from_type: "decimal".into(),
         span,
-        help: Some("Decimal value is too large or has too much precision to convert to float".into()),
+        help: Some(
+            "Decimal value is too large or has too much precision to convert to float".into(),
+        ),
     }
 }

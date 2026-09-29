@@ -242,6 +242,7 @@ fn is_known_value_type(ty: &str) -> bool {
             | super::types::TY_GLOB
             | super::types::TY_RANGE
             | super::types::TY_CELL_PATH
+            | super::types::TY_DECIMAL
     )
 }
 

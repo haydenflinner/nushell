@@ -1,4 +1,5 @@
 use nu_engine::command_prelude::*;
+use nu_protocol::decode_decimal_string;
 use toml::value::{Datetime, Offset};
 
 #[derive(Clone)]
@@ -124,7 +125,10 @@ fn convert_toml_to_value(value: &toml::Value, span: Span) -> Value {
                 .collect(),
             span,
         ),
-        toml::Value::String(s) => Value::string(s.clone(), span),
+        toml::Value::String(s) => match decode_decimal_string(s) {
+            Some(decimal) => Value::decimal(decimal, span),
+            None => Value::string(s.clone(), span),
+        },
         toml::Value::Datetime(dt) => convert_toml_datetime_to_value(dt, span),
     }
 }

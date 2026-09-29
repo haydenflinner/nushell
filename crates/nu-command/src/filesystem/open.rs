@@ -58,6 +58,12 @@ impl Command for Open {
                 "The file(s) to open.",
             )
             .switch("raw", "Open file as raw binary.", Some('r'))
+            .named(
+                "as",
+                SyntaxShape::String,
+                "Validate the parsed data against a declared `type` (e.g. `open users.json --as list<User>`).",
+                Some('a'),
+            )
             .category(Category::FileSystem)
     }
 
@@ -69,6 +75,15 @@ impl Command for Open {
         input: PipelineData,
     ) -> Result<PipelineData, ShellError> {
         let raw = call.has_flag(engine_state, stack, "raw")?;
+        let as_type: Option<String> = call.get_flag(engine_state, stack, "as")?;
+        if raw && as_type.is_some() {
+            return Err(GenericError::new(
+                "`--as` requires a parsed converter",
+                "`--raw` skips conversion, so there is no structured value to validate",
+                call.head,
+            )
+            .into());
+        }
         let call_span = call.head;
         let cwd = engine_state.cwd(Some(stack))?.into_std_path_buf();
         let mut paths = call.rest::<Spanned<NuGlob>>(engine_state, stack, 0)?;
@@ -225,6 +240,25 @@ impl Command for Open {
                             } else {
                                 eval_call::<WithoutDebug>(engine_state, stack, &open_call, stream)
                             };
+                            let command_output = match &as_type {
+                                // `--as` validates the converter output
+                                // against a declared type — same rule as
+                                // `from <ext> --as`, applied per file.
+                                Some(type_name) => command_output.and_then(|data| {
+                                    data.into_value(call_span)
+                                        .and_then(|value| {
+                                            nu_protocol::validate::validate_value(
+                                                value,
+                                                type_name,
+                                                engine_state,
+                                                &[],
+                                                call_span,
+                                            )
+                                        })
+                                        .map(|v| v.into_pipeline_data())
+                                }),
+                                None => command_output,
+                            };
                             output.push(command_output.map_err(|inner| {
                                 ShellError::Generic(
                                     GenericError::new(
@@ -246,6 +280,17 @@ impl Command for Open {
                             })?);
                         }
                         None => {
+                            if let Some(type_name) = &as_type {
+                                return Err(GenericError::new(
+                                    format!("`--as {type_name}` needs a `from` converter"),
+                                    format!(
+                                        "no `from <ext>` command matched '{}'; use `open --raw` or pipe through a converter with its own `--as`",
+                                        path.display()
+                                    ),
+                                    arg_span,
+                                )
+                                .into());
+                            }
                             // If no converter was found, add content-type metadata
                             let content_type = path
                                 .extension()

@@ -554,3 +554,34 @@ fn test_metadata_without_raw_has_source_for_files_with_content_type(
     assert_contains(source_contains, source);
     Ok(())
 }
+
+#[test]
+fn open_as_validates_against_declared_type() -> Result {
+    Playground::setup("open_as_valid", |dirs, sandbox| {
+        sandbox.with_files(&[FileWithContent(
+            "user.json",
+            r#"{"name": "ada", "age": 30}"#,
+        )]);
+
+        test()
+            .cwd(dirs.test())
+            .run(r#"struct User { name: string, age: int }; open user.json --as User | get age"#)
+            .expect_value_eq(30)
+    })
+}
+
+#[test]
+fn open_as_rejects_mismatched_data() -> Result {
+    Playground::setup("open_as_invalid", |dirs, sandbox| {
+        sandbox.with_files(&[FileWithContent(
+            "user.json",
+            r#"{"name": "ada", "age": "old"}"#,
+        )]);
+
+        test()
+            .cwd(dirs.test())
+            .run(r#"struct User { name: string, age: int }; open user.json --as User"#)
+            .expect_error()
+            .map(drop)
+    })
+}

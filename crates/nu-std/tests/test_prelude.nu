@@ -15,7 +15,7 @@ def option [] {
     assert ((Option.none | describe) == "Option")
 
     let unwrap_or = {|opt: Option, default|
-        match $opt { Option.some {payload: $v} => $v, Option.none => $default }
+        match $opt { Option.some $v => $v, Option.none => $default }
     }
     assert ((do $unwrap_or (Option.some 42) 0) == 42)
     assert ((do $unwrap_or Option.none 0) == 0)

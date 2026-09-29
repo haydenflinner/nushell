@@ -360,14 +360,14 @@ impl CompareTypes for Type {
                 }
             }
 
-            // A collection value checks permissively into a custom-typed
+            // A record value checks permissively into a custom-typed
             // position: enum values lower to base records, and recursive
             // named types hold self-references as `Custom`, so structural
-            // data must pass here — deep validation lives at the boundary
-            // (`--as`, `Type.from-record`).
-            (Type::List(_) | Type::Table(_) | Type::Record(_), Type::Custom(_)) => {
-                Some(TypeRelation::Subtype)
-            }
+            // record data must pass here — deep validation lives at the
+            // boundary (`--as`, `Type.from-record`). Restricted to records:
+            // opening lists/tables too would let e.g. `list<int>` pass a
+            // `custom("semver")` input and corrupt pipeline type inference.
+            (Type::Record(_), Type::Custom(_)) => Some(TypeRelation::Subtype),
 
             _ => None,
         }
@@ -414,14 +414,14 @@ impl CompareTypes for Type {
             (Type::OneOf(dst_tys), Type::OneOf(src_tys)) => src_tys.is_assignable_to(dst_tys),
             (Type::OneOf(dst_tys), src_ty) => src_ty.is_assignable_to(dst_tys),
             (dst_ty, Type::OneOf(src_tys)) => src_tys.is_assignable_to(dst_ty),
-            // leave it to the runtime — a custom (enum/named) type flows
-            // into collection positions, and collection literals flow into
-            // custom positions: enum values ARE their base records, and
-            // recursive aliases hold self-references as `Custom`, so
-            // structural literals must pass here and be validated at the
-            // boundary (`--as`, `from-record`).
-            (Type::List(_) | Type::Table(_) | Type::Record(_), Type::Custom(_)) => true,
-            (Type::Custom(_), Type::List(_) | Type::Table(_) | Type::Record(_)) => true,
+            // leave it to the runtime — a custom (enum/named) type lowers
+            // to its base record, and record literals flow into custom
+            // positions (enum values ARE `{kind, payload}` records, and
+            // recursive aliases hold self-references as `Custom`), so
+            // records pass here and are validated at the boundary (`--as`,
+            // `from-record`). Restricted to records — see `compare_types`.
+            (Type::Record(_), Type::Custom(_)) => true,
+            (Type::Custom(_), Type::Record(_)) => true,
             (lhs, rhs @ Type::CellPath) => rhs.is_subtype_of(lhs),
             (lhs, rhs) => rhs.compare_types(lhs).is_some(),
         }

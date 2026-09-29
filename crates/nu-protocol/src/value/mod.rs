@@ -2205,14 +2205,15 @@ impl CompareTypes<Type> for Value {
                     .iter()
                     .map(|val| val.as_record().ok().and_then(|rec| rec.compare_types(cols)))
                     .try_fold(TypeRelation::Equal, |acc, e| acc.combine(e?)),
-                // Custom positions may hold structural data (enum base
-                // records, recursive-alias self-references) — leave deep
-                // checking to `--as`/`from-record`.
-                Type::Custom(_) => Some(TypeRelation::Subtype),
                 _ => None,
             },
             Value::Record { val, .. } => match other {
                 Type::Record(cols) => val.compare_types(cols),
+                // Custom positions may hold structural record data (enum
+                // base records, recursive-alias self-references) — leave
+                // deep checking to `--as`/`from-record`. Lists deliberately
+                // do not get this: a list value against e.g.
+                // `custom("semver")` must stay a mismatch.
                 Type::Custom(_) => Some(TypeRelation::Subtype),
                 _ => None,
             },

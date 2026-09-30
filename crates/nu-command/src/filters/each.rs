@@ -1,6 +1,6 @@
 use super::utils::chain_error_with_input;
 use nu_engine::{ClosureEval, ClosureEvalOnce, command_prelude::*};
-use nu_protocol::engine::Closure;
+use nu_protocol::{engine::Closure, eval_const::eval_const_closure};
 
 #[derive(Clone)]
 pub struct Each;
@@ -142,6 +142,10 @@ they represent."#
         ]
     }
 
+    fn is_const(&self) -> bool {
+        true
+    }
+
     fn run(
         &self,
         engine_state: &EngineState,
@@ -273,6 +277,56 @@ they represent."#
             result
         } else {
             result.and_then(|x| x.filter(|v| !v.is_nothing(), engine_state.signals()))
+        }
+    }
+
+    /// Const-eval version of `each`: iterate a const input (list, range, or
+    /// stream) and evaluate the closure for each item via
+    /// [`eval_const_closure`]. Mirrors `run` for the value-input cases; other
+    /// input kinds (byte streams, custom iterables, external output) cannot be
+    /// produced during parse-time evaluation anyway.
+    fn run_const(
+        &self,
+        working_set: &StateWorkingSet,
+        stack: &mut Stack,
+        call: &Call,
+        input: PipelineData,
+    ) -> Result<PipelineData, ShellError> {
+        let head = call.head;
+        let closure: Closure = call.req_const(working_set, stack, 0)?;
+        let keep_empty = call.has_flag_const(working_set, stack, "keep-empty")?;
+        let flatten = call.has_flag_const(working_set, stack, "flatten")?;
+
+        match input {
+            PipelineData::Empty | PipelineData::Value(Value::Nothing { .. }, ..) => Ok(input),
+            input => {
+                let mut out = vec![];
+                for item in input.into_iter() {
+                    if flatten {
+                        let data = eval_const_closure(
+                            working_set,
+                            &closure,
+                            vec![item.clone()],
+                            item.into_pipeline_data(),
+                            head,
+                        )?;
+                        out.extend(data.into_iter());
+                    } else {
+                        let value = eval_const_closure(
+                            working_set,
+                            &closure,
+                            vec![item.clone()],
+                            item.into_pipeline_data(),
+                            head,
+                        )?
+                        .into_value(head)?;
+                        if keep_empty || !value.is_nothing() {
+                            out.push(value);
+                        }
+                    }
+                }
+                Ok(Value::list(out, head).into_pipeline_data())
+            }
         }
     }
 }
